@@ -1,11 +1,11 @@
 .PHONY: build build-playground start deps-playground lint lint-fix
 
 build:
-	go build -o bin/host cmd/main.go
+	go build -trimpath -ldflags="-s -w" -o bin/host cmd/main.go
 
 build-playground: deps-playground
 	go generate -tags hostplayground ./playground
-	go build -tags hostplayground -o ./bin/host cmd/main.go
+	go build -trimpath -ldflags="-s -w" -tags hostplayground -o ./bin/host cmd/main.go
 
 start:
 	./bin/host

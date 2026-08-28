@@ -94,7 +94,7 @@ Deliberately not done: `read_only: true` root filesystem (Badger and the WASM ru
 
 ### 9. The binary runs standalone
 
-The same binary runs outside Docker with `CONFIG_PATH`, `SHINZO_DATA_DIR`, and the same environment variables; `BUILD.md` documents this plus a systemd unit. The only external dependency is the wasmtime/wasmer shared libraries on `LD_LIBRARY_PATH`.
+The same binary runs outside Docker with `CONFIG_PATH`, `SHINZO_DATA_DIR`, and the same environment variables; `BUILD.md` documents this plus a systemd unit. It has no external dependencies: Lens transforms run on wazero (pure Go), and the binary links only libc. The Dockerfiles used to download wasmtime and wasmer and ship them in the runtime image — leftovers from an earlier Lens engine, verified dead with `ldd`/`otool` and removed. Binaries are built with `-trimpath -ldflags="-s -w"`, and the host prints a three-line banner on startup (API URL, peer ID, registration URL) so a first run explains itself.
 
 ## Consequences
 

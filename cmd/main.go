@@ -46,6 +46,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to start hosting: %w", err))
 	}
+	printBanner(cfg, myHost)
 
 	// Run until SIGINT/SIGTERM (Ctrl-C, `docker stop`, systemd stop), then close
 	// cleanly so the database flushes and the P2P host leaves the swarm.
@@ -64,6 +65,29 @@ func closeWithTimeout(h *host.Host) error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return h.Close(ctx)
+}
+
+// printBanner tells the operator the three things they need after startup:
+// where the node is, who it is, and how to register it.
+func printBanner(cfg *config.Config, h *host.Host) {
+	port := cfg.HostConfig.HealthServerPort
+	if port == 0 {
+		port = 8080
+	}
+	scheme := "http"
+	if cfg.HostConfig.HTTP.TLS.CertFile != "" {
+		scheme = "https"
+	}
+	base := fmt.Sprintf("%s://localhost:%d", scheme, port)
+	peerID := "(not available yet)"
+	if info, err := h.GetPeerInfo(); err == nil && info != nil && info.Self != nil && info.Self.ID != "" {
+		peerID = info.Self.ID
+	}
+	fmt.Printf("\n"+
+		"  Shinzo host is running (network: %s)\n"+
+		"  API + health : %s   (health: /health, GraphQL: /api/v0/graphql)\n"+
+		"  Peer ID      : %s\n"+
+		"  Register     : %s/registration-app\n\n", cfg.Network, base, peerID, base)
 }
 
 // shutdownTimeout bounds a graceful stop. Docker gives a container 10s

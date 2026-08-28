@@ -8,11 +8,14 @@ services:
     # the amd64 image (it then runs under Rosetta).
     # platform: linux/amd64
 
-    # Build from source instead of pulling the published image.
+    # Build from source instead of pulling the published image. Give it a local
+    # name so a dev build never masquerades as (or gets pulled over by) the
+    # published image.
     # build:
     #   context: .
     #   args:
     #     TAGS: hostplayground   # include the GraphQL Playground UI on :9182
+    # image: shinzo-host:dev
 
     # Cap memory on a laptop (production sizing is documented at docs.shinzo.network).
     # mem_limit: 4g

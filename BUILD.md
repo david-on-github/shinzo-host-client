@@ -5,7 +5,7 @@
 - [Go 1.25+](https://go.dev/dl/)
 - Make
 
-Wasmtime and Wasmer are installed automatically inside the Docker build. If you are building locally (outside Docker), both WASM runtimes need to be on your `LD_LIBRARY_PATH`. The `Dockerfile` has the exact versions and install steps.
+The binary is self-contained: Lens transforms run on wazero (pure Go), so there are no runtime libraries to install.
 
 ## Steps
 
@@ -46,16 +46,15 @@ To include the Playground UI in the image, pass `--build-arg TAGS=hostplayground
 
 ## Running standalone (no Docker)
 
-The binary is self-contained apart from the two WASM runtimes. Once `make build` succeeds:
+The binary is self-contained. Once `make build` succeeds:
 
 ```shell
-export LD_LIBRARY_PATH=/usr/local/lib          # where wasmtime + wasmer .so files live
 export SHINZO_KEY_PASSPHRASE=<your-passphrase>
 export SHINZO_DATA_DIR=/var/lib/shinzo-host     # all node state goes here
 ./bin/host
 ```
 
-No config file is needed; the compiled-in defaults join `testnet`. To customise, point `CONFIG_PATH` at your own copy of `config/config.yaml`. The same environment variables listed in the README work here exactly as they do under Docker.
+No config file is needed; the compiled-in defaults join `testnet`. To customise, point `CONFIG_PATH` at your own copy of `config/config.yaml`. The same environment variables listed in the README work here exactly as they do under Docker. Nothing else needs to be installed.
 
 A minimal systemd unit:
 
@@ -66,7 +65,6 @@ After=network-online.target
 
 [Service]
 User=shinzo
-Environment=LD_LIBRARY_PATH=/usr/local/lib
 Environment=SHINZO_DATA_DIR=/var/lib/shinzo-host
 EnvironmentFile=/etc/shinzo-host.env      # SHINZO_KEY_PASSPHRASE=..., SHINZO_NETWORK=...
 ExecStart=/usr/local/bin/shinzo-host
