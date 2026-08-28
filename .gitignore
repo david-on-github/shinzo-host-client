@@ -26,6 +26,9 @@ go.work.sum
 
 .defra/
 .lens/
+data/
+docker-compose.override.yml
+config/config.local.yaml
 
 .vscode
 .idea

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -173,7 +174,8 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 		cfg = DefaultConfig
 	}
 
-	logger.Init(cfg.Logger.Development, "./logs")
+	// Containers and systemd collect stdout; file logging is opt-in via LOG_DIR.
+	logger.Init(cfg.Logger.Development, os.Getenv("LOG_DIR"))
 
 	// Load ACP middleware configuration from the environment before any
 	// defradb work so a misconfigured host fails fast instead of starting
@@ -379,9 +381,30 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 	if networkHandler != nil {
 		logger.Sugar.Info("▶️ Adding P2P peers and starting network...")
 
+		// The hub knows every registered indexer for our chain, so it is the
+		// discovery source; the network preset and config entries are always kept.
+		// Selection is capped: every indexer peer sends a full copy of every block.
+		configuredPeers := cfg.DefraDB.P2P.BootstrapPeers
+		if rpcClient != nil && cfg.DefraDB.P2P.BootstrapFromHub {
+			if hubPeers, err := rpcClient.FetchIndexerPeers(context.Background(), cfg.Shinzo.SourceChainID); err != nil {
+				logger.Sugar.Warnf("⚠️ Could not fetch indexer peers from ShinzoHub, using configured peers only: %v", err)
+			} else {
+				logger.Sugar.Infof("📡 ShinzoHub lists %d registered indexer(s) for chain %d", len(hubPeers), cfg.Shinzo.SourceChainID)
+				maxPeers := cfg.DefraDB.P2P.MaxIndexerPeers
+				if maxPeers <= 0 {
+					maxPeers = cfg.Shinzo.MinimumAttestations + 1
+				}
+				selfID := ""
+				if info, err := newHost.GetPeerInfo(); err == nil && info != nil && info.Self != nil {
+					selfID = info.Self.ID
+				}
+				configuredPeers = selectIndexerPeers(configuredPeers, hubPeers, selfID, maxPeers)
+			}
+		}
+
 		// Resolve bootstrap peers: auto-discover peer IDs for addresses that don't include them
 		discoveryTimeout := time.Duration(cfg.DefraDB.P2P.PeerDiscoveryTimeoutMs) * time.Millisecond
-		bootstrapPeers := resolveBootstrapPeers(context.Background(), cfg.DefraDB.P2P.BootstrapPeers, discoveryTimeout)
+		bootstrapPeers := resolveBootstrapPeers(context.Background(), configuredPeers, discoveryTimeout)
 		logger.Sugar.Infof("▶️ Adding %d P2P peers and starting network...", len(bootstrapPeers))
 
 		for _, peer := range bootstrapPeers {
@@ -442,11 +465,13 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 	// No separate monitoring goroutine needed
 
 	// Initialize and start health server
+	// Prefer the address DefraDB actually bound (loopback is rewritten to the
+	// LAN IP at startup) so the /api/v0/ proxy and readiness checks reach it.
 	var healthDefraURL string
-	if cfg.DefraDB.URL != "" {
-		healthDefraURL = cfg.DefraDB.URL
-	} else if defraNode != nil && defraNode.APIURL != "" {
+	if defraNode != nil && defraNode.APIURL != "" {
 		healthDefraURL = defraNode.APIURL
+	} else if cfg.DefraDB.URL != "" {
+		healthDefraURL = cfg.DefraDB.URL
 	}
 
 	if defraNode != nil {
@@ -460,7 +485,12 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 	if port == 0 {
 		port = 8080
 	}
-	newHost.healthServer = server.NewHealthServer(port, newHost, healthDefraURL, newHost.metrics, lcdURL)
+	httpCfg := cfg.HostConfig.HTTP
+	newHost.healthServer = server.NewHealthServer(
+		port, newHost, healthDefraURL, newHost.metrics, lcdURL,
+		server.WithAllowedOrigins(httpCfg.AllowedOrigins),
+		server.WithTLS(httpCfg.TLS.CertFile, httpCfg.TLS.KeyFile),
+	)
 
 	// Start health server in background
 	go func() {

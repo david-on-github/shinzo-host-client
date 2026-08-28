@@ -48,3 +48,7 @@ Thumbs.db
 *.pem
 *.key
 reviews/
+
+# Node state and machine-local config
+config/config.local.yaml
+docker-compose.override.yml

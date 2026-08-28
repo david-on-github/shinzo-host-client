@@ -25,6 +25,22 @@ const (
 // ErrNegativeSchemaTimeout is returned when the schema HTTP client timeout is negative.
 var ErrNegativeSchemaTimeout = fmt.Errorf("schema.http_client_timeout_secs must be non-negative")
 
+// firstEnv returns the value of the first environment variable that is set.
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// DefaultSourceChainID is Ethereum mainnet.
+const DefaultSourceChainID = 1
+
+// ErrUnknownNetwork is returned when config.network / SHINZO_NETWORK names no known preset.
+var ErrUnknownNetwork = fmt.Errorf("unknown network")
+
 // ErrExcessiveSchemaTimeout is returned when the schema HTTP client timeout exceeds the maximum.
 var ErrExcessiveSchemaTimeout = fmt.Errorf("schema.http_client_timeout_secs must not exceed %d", MaxSchemaHTTPClientTimeout)
 
@@ -38,6 +54,17 @@ type DefraDBP2PConfig struct {
 	ReconnectIntervalMs    int      `yaml:"reconnect_interval_ms"`
 	EnableAutoReconnect    bool     `yaml:"enable_auto_reconnect"`
 	PeerDiscoveryTimeoutMs int      `yaml:"peer_discovery_timeout_ms"` // Timeout for auto-discovering peer IDs (default: 10000)
+	// BootstrapFromHub asks ShinzoHub for registered indexers on startup and
+	// peers with a capped selection of them (see MaxIndexerPeers). Off by
+	// default: every indexer peer streams a full copy of every block, so which
+	// indexers a host listens to is a deliberate choice — the network preset
+	// and bootstrap_peers — not something derived from who has registered.
+	// Overridable with BOOTSTRAP_FROM_HUB=true.
+	BootstrapFromHub bool `yaml:"bootstrap_from_hub"`
+	// MaxIndexerPeers caps how many indexers this host replicates from.
+	// Every indexer peer sends a full copy of every block, so load scales
+	// linearly with this number. 0 = minimum_attestations + 1.
+	MaxIndexerPeers int `yaml:"max_indexer_peers"`
 }
 
 // DefraDBStoreConfig represents store configuration for DefraDB.
@@ -70,6 +97,9 @@ type LoggerConfig struct {
 
 // Config represents the overall configuration for the Shinzo host application, including DefraDB, Shinzo-specific settings, logging, hosting, and pruning.
 type Config struct {
+	// Network selects a built-in preset (hub + bootstrap peers). See Networks().
+	// "custom" disables presets. Overridable with SHINZO_NETWORK.
+	Network    string        `yaml:"network"`
 	DefraDB    DefraDBConfig `yaml:"defradb"`
 	Shinzo     ShinzoConfig  `yaml:"shinzo"`
 	Schema     SchemaConfig  `yaml:"schema"`
@@ -95,9 +125,13 @@ type SchemaConfig struct {
 
 // ShinzoConfig represents configuration specific to the Shinzo host application.
 type ShinzoConfig struct {
-	MinimumAttestations int    `yaml:"minimum_attestations"`
-	HubBaseURL          string `yaml:"hub_base_url"` // ShinzoHub hostname only — no scheme, no port (e.g. "testnet.shinzo.network")
-	StartHeight         uint64 `yaml:"start_height"`
+	MinimumAttestations int `yaml:"minimum_attestations"`
+	// SourceChainID is the EVM chain this host consumes primitives for
+	// (1 = Ethereum mainnet). Only indexers registered for this chain on the
+	// hub are considered as peers. Overridable with SOURCE_CHAIN_ID.
+	SourceChainID uint64 `yaml:"source_chain_id"`
+	HubBaseURL    string `yaml:"hub_base_url"` // ShinzoHub hostname only — no scheme, no port (e.g. "testnet.shinzo.network")
+	StartHeight   uint64 `yaml:"start_height"`
 
 	// P2P Control Settings
 	P2PEnabled bool `yaml:"p2p_enabled"`
@@ -168,7 +202,24 @@ type HostConfig struct {
 	LensRegistryPath   string         `yaml:"lens_registry_path"`    // At this path, we will store the lens' wasm files
 	HealthServerPort   int            `yaml:"health_server_port"`    // Port for the health server (default: 8080)
 	OpenBrowserOnStart bool           `yaml:"open_browser_on_start"` // Auto-open metrics page in browser on startup (default: false)
+	HTTP               HTTPConfig     `yaml:"http"`                  // Public HTTP surface options (CORS, TLS)
 	Snapshot           SnapshotConfig `yaml:"snapshot"`              // Snapshot bootstrap configuration
+}
+
+// HTTPConfig configures the node's public HTTP surface (the health server).
+type HTTPConfig struct {
+	// AllowedOrigins lists browser origins permitted to call this node
+	// (e.g. "https://explorer.shinzo.network"). "*" allows any origin.
+	// Empty disables CORS entirely.
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	// TLS, when both files are set, serves HTTPS directly from the node.
+	TLS TLSConfig `yaml:"tls"`
+}
+
+// TLSConfig points at a PEM certificate/key pair.
+type TLSConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // SnapshotConfig configures historical snapshot download and import on startup.
@@ -213,11 +264,62 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.DefraDB.P2P.BootstrapPeers = strings.Split(v, ",")
 	}
 
+	// SHINZO_DATA_DIR relocates all node state (database, keys, lens registry)
+	// in one go, for running the binary outside the repo / container.
+	if v := os.Getenv("SHINZO_DATA_DIR"); v != "" {
+		cfg.DefraDB.Store.Path = v
+		cfg.HostConfig.LensRegistryPath = filepath.Join(v, "lens")
+	}
+
+	if v := os.Getenv("BOOTSTRAP_FROM_HUB"); v != "" {
+		cfg.DefraDB.P2P.BootstrapFromHub = strings.EqualFold(v, "true") || v == "1"
+	}
+
+	if v := os.Getenv("SOURCE_CHAIN_ID"); v != "" {
+		id, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SOURCE_CHAIN_ID value %q: %w", v, err)
+		}
+		cfg.Shinzo.SourceChainID = id
+	}
+	if cfg.Shinzo.SourceChainID == 0 {
+		cfg.Shinzo.SourceChainID = DefaultSourceChainID
+	}
+
+	if v := os.Getenv("SHINZO_NETWORK"); v != "" {
+		cfg.Network = v
+	}
+	if v := os.Getenv("SHINZO_HUB_BASE_URL"); v != "" {
+		cfg.Shinzo.HubBaseURL = v
+	}
+	if err := cfg.applyNetworkPreset(); err != nil {
+		return nil, err
+	}
+
+	// ALLOWED_ORIGINS is a comma-separated list of browser origins, added to
+	// the network preset's and the config file's.
+	if v := os.Getenv("ALLOWED_ORIGINS"); v != "" {
+		cfg.HostConfig.HTTP.AllowedOrigins = mergeUnique(cfg.HostConfig.HTTP.AllowedOrigins, strings.Split(v, ","))
+	}
+
 	// DEFRA_URL overrides defradb.url at runtime, so deployment artifacts
 	// can pick a different bind address (e.g. 0.0.0.0:9181 instead of the
 	// loopback-only default) without editing the YAML.
 	if v := os.Getenv("DEFRA_URL"); v != "" {
 		cfg.DefraDB.URL = v
+	}
+
+	// SHINZO_KEY_PASSPHRASE encrypts the node's identity keys on disk.
+	// DEFRA_KEYRING_SECRET / DEFRADB_KEYRING_SECRET are accepted as legacy aliases.
+	if v := firstEnv("SHINZO_KEY_PASSPHRASE", "DEFRA_KEYRING_SECRET", "DEFRADB_KEYRING_SECRET"); v != "" {
+		cfg.DefraDB.KeyringSecret = v
+	} else if f := os.Getenv("SHINZO_KEY_PASSPHRASE_FILE"); f != "" {
+		// Docker/Kubernetes secrets are mounted as files; read the passphrase from one.
+		b, err := os.ReadFile(filepath.Clean(f))
+		if err != nil {
+			return nil, fmt.Errorf("read SHINZO_KEY_PASSPHRASE_FILE: %w", err)
+		}
+		cfg.DefraDB.KeyringSecret = strings.TrimSpace(string(b))
 	}
 
 	if v := os.Getenv("INDEXER_SCHEMA_ENDPOINT"); v != "" {

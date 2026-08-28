@@ -83,6 +83,13 @@ RUN set -ex && \
 # Runtime stage
 FROM ubuntu:24.04
 
+# Set by the release workflow; harmless defaults for local builds.
+ARG VERSION=dev
+ARG VCS_REF
+LABEL org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.source=https://github.com/shinzonetwork/shinzo-host-client
+
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -118,9 +125,13 @@ COPY --from=builder /app/config/config.yaml /app/config.yaml
 COPY --from=builder /app/playground/dist /app/playground/dist
 
 # Create directories for data persistence
-RUN mkdir -p .defra .lens && \
+RUN mkdir -p data && \
     chown -R shinzo:shinzo /app
 
+
+# All node state (database, keys, lens registry) lives here. Declared so that
+# even a bare `docker run` gets a volume instead of writing into the container layer.
+VOLUME ["/app/data"]
 # Switch to non-root user
 USER shinzo
 
@@ -132,9 +143,9 @@ ENV LOG_STACKTRACE=false
 # Expose ports
 # 9181: DefraDB API
 # 9182: GraphQL Playground (if enabled)
-EXPOSE 9181 9182 9171
+EXPOSE 8080 9171
 
 HEALTHCHECK --interval=15s --timeout=30s --start-period=120s --retries=10 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/metrics || exit 1
+    CMD wget -qO- http://localhost:8080/health >/dev/null || exit 1
 
 CMD ["./host"]

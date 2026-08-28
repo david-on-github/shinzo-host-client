@@ -23,6 +23,13 @@ func Init(development bool, logsDir string) {
 	} else {
 		zapLevel = zap.InfoLevel
 	}
+	// LOG_LEVEL (debug|info|warn|error) applies to the app logger as well as
+	// DefraDB's, so one variable controls both.
+	if lvl := os.Getenv("LOG_LEVEL"); lvl != "" {
+		if parsed, err := zapcore.ParseLevel(lvl); err == nil {
+			zapLevel = parsed
+		}
+	}
 
 	encoderConfig := zap.NewDevelopmentEncoderConfig()
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
@@ -31,7 +38,9 @@ func Init(development bool, logsDir string) {
 
 	var cores []zapcore.Core
 
-	if err := os.MkdirAll(logsDir, 0o750); err == nil { // nolint:mnd
+	if logsDir == "" {
+		cores = append(cores, zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), consoleWriter, zapLevel))
+	} else if err := os.MkdirAll(logsDir, 0o750); err == nil { // nolint:mnd
 		logFile := filepath.Join(logsDir, "logfile.log")
 		errorFile := filepath.Join(logsDir, "errorfile.log")
 

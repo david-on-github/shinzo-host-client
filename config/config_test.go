@@ -14,6 +14,7 @@ func TestLoadConfig_ValidYAML(t *testing.T) {
 	configPath := filepath.Join(tempDir, "test_config.yaml")
 
 	configContent := `
+network: custom
 defradb:
   url: "http://localhost:9181"
   p2p:
@@ -65,16 +66,17 @@ defradb:
 	}
 
 	// Set environment variables
-	_ = os.Setenv("DEFRA_KEYRING_SECRET", "env_secret")
-	defer func() { _ = os.Unsetenv("DEFRA_KEYRING_SECRET") }()
+	t.Setenv("SHINZO_KEY_PASSPHRASE", "env_secret")
 
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.DefraDB.KeyringSecret != "original_secret" {
-		t.Errorf("Expected keyring_secret 'original_secret', got '%s'", cfg.DefraDB.KeyringSecret)
+	// Environment overrides the file, consistent with every other env override here
+	// and with the documented `docker compose` usage (DEFRA_KEYRING_SECRET in .env).
+	if cfg.DefraDB.KeyringSecret != "env_secret" {
+		t.Errorf("Expected keyring_secret 'env_secret', got '%s'", cfg.DefraDB.KeyringSecret)
 	}
 }
 
@@ -220,7 +222,7 @@ func TestLoadConfig_BootstrapPeersEnvOverride(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.yaml")
 
-	err := os.WriteFile(configPath, []byte("defradb:\n  p2p:\n    bootstrap_peers: []\n"), 0o600)
+	err := os.WriteFile(configPath, []byte("network: custom\ndefradb:\n  p2p:\n    bootstrap_peers: []\n"), 0o600)
 	require.NoError(t, err)
 
 	t.Setenv("BOOTSTRAP_PEERS", "peer1,peer2,peer3")

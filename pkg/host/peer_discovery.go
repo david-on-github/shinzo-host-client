@@ -32,6 +32,7 @@ type result struct {
 // Discovery requests are run in parallel to avoid sequential timeout delays.
 //
 // Supported input formats:
+//   - Node URL:          https://node.example  or  http://1.2.3.4:8080       (peer ID + port fetched from <url>/registration)
 //   - Full multiaddr:    /ip4/35.239.160.177/tcp/9171/p2p/12D3KooW...  (passed through as-is)
 //   - Without peer ID:   /ip4/35.239.160.177/tcp/9171                   (peer ID discovered automatically)
 //   - IPv6 multiaddr:    /ip6/::1/tcp/9171                              (peer ID discovered automatically)
@@ -51,6 +52,27 @@ func resolveBootstrapPeers(ctx context.Context, peers []string, timeout time.Dur
 	for i, peerAddr := range peers {
 		peerAddr = strings.TrimSpace(peerAddr)
 		if peerAddr == "" {
+			continue
+		}
+
+		// Node URLs are resolved by asking the node for its own P2P address.
+		if isNodeURL(peerAddr) {
+			wg.Add(1)
+			go func(idx int, nodeURL string) {
+				defer wg.Done()
+
+				logger.Sugar.Infof("🔍 Resolving node URL %s ...", nodeURL)
+				fullAddr, err := resolveNodeURL(ctx, nodeURL, timeout)
+				if err != nil {
+					logger.Sugar.Warnf("⚠️ Failed to resolve node URL %s: %v", nodeURL, err)
+					return
+				}
+
+				mu.Lock()
+				results = append(results, result{index: idx, addr: fullAddr})
+				mu.Unlock()
+				logger.Sugar.Infof("📡 Bootstrap peer (from URL): %s", fullAddr)
+			}(i, peerAddr)
 			continue
 		}
 
@@ -99,6 +121,26 @@ func resolveBootstrapPeers(ctx context.Context, peers []string, timeout time.Dur
 	sorted := makeSortedArray(results, peers)
 
 	return sorted
+}
+
+// mergePeers concatenates peer lists in order, dropping blanks and duplicates.
+func mergePeers(lists ...[]string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, list := range lists {
+		for _, p := range list {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if _, dup := seen[p]; dup {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func makeSortedArray(results []result, peers []string) []string {

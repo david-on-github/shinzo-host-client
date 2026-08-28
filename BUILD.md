@@ -44,6 +44,38 @@ docker build -t shinzo-host-client .
 
 To include the Playground UI in the image, pass `--build-arg TAGS=hostplayground`.
 
+## Running standalone (no Docker)
+
+The binary is self-contained apart from the two WASM runtimes. Once `make build` succeeds:
+
+```shell
+export LD_LIBRARY_PATH=/usr/local/lib          # where wasmtime + wasmer .so files live
+export SHINZO_KEY_PASSPHRASE=<your-passphrase>
+export SHINZO_DATA_DIR=/var/lib/shinzo-host     # all node state goes here
+./bin/host
+```
+
+No config file is needed; the compiled-in defaults join `testnet`. To customise, point `CONFIG_PATH` at your own copy of `config/config.yaml`. The same environment variables listed in the README work here exactly as they do under Docker.
+
+A minimal systemd unit:
+
+```ini
+[Unit]
+Description=Shinzo host
+After=network-online.target
+
+[Service]
+User=shinzo
+Environment=LD_LIBRARY_PATH=/usr/local/lib
+Environment=SHINZO_DATA_DIR=/var/lib/shinzo-host
+EnvironmentFile=/etc/shinzo-host.env      # SHINZO_KEY_PASSPHRASE=..., SHINZO_NETWORK=...
+ExecStart=/usr/local/bin/shinzo-host
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Ports
 
 > [!NOTE]
@@ -54,4 +86,6 @@ To include the Playground UI in the image, pass `--build-arg TAGS=hostplayground
 | `9181` | DefraDB GraphQL + REST API |
 | `9182` | GraphQL Playground UI (if enabled) |
 | `9171` | libp2p P2P networking |
-| `8080` | Health and metrics server |
+| `8080` | Health, metrics, registration, and a reverse proxy to the DefraDB API under `/api/v0/` |
+
+`docker-compose.yml` publishes the HTTP server on host port `80` (container `8080`) and P2P on `9171`; `9181`/`9182` stay internal to the container. The HTTP port is the only one a browser client or dashboard needs. CORS origins and optional TLS for it are set under `host.http` in `config.yaml`; put your own reverse proxy in front if you'd rather terminate TLS there.
