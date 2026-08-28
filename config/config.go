@@ -264,7 +264,6 @@ func LoadConfig(path string) (*Config, error) {
 // applyEnvOverrides layers operator inputs from the environment over the
 // file, then resolves the network preset. Environment wins over the file.
 func applyEnvOverrides(cfg *Config) error {
-
 	// Apply environment variable overrides
 	if v := os.Getenv("START_HEIGHT"); v != "" {
 		height, err := strconv.ParseUint(v, 10, 64)

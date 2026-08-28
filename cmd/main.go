@@ -50,9 +50,8 @@ func main() {
 	// Run until SIGINT/SIGTERM (Ctrl-C, `docker stop`, systemd stop), then close
 	// cleanly so the database flushes and the P2P host leaves the swarm.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
-	stop()
+	stop() // restore default signal handling: a second Ctrl-C kills immediately
 
 	fmt.Println("Shutting down...")
 	if err := closeWithTimeout(myHost); err != nil {
