@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Studio_v1_Erc20TransferUSDC",
+    "data": {
+      "Query": "Ethereum__Mainnet__Log { address topics data blockNumber transaction { hash from to } }",
+      "Sdl": "type Studio_v1_Erc20TransferUSDC @materialized(if: false) {\n  tokenAddress: String\n  hash: String\n  blockNumber: Int\n  from: String\n  to: String\n  amount: String\n}",
+      "Transform": {
+        "Lenses": [
+          {
+            "Path": "file://__LENS_DIR__/erc20_transfer_usdc.wasm",
+            "Arguments": "{\"tokenAddress\":\"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\"}"
+          }
+        ]
+      }
+    }
+  }
+]

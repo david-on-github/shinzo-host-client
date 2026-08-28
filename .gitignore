@@ -58,3 +58,5 @@ logs/
 
 /pkg/view/var/
 reviews/
+scripts/smoke/token/out/
+scripts/smoke/token/cache/

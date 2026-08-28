@@ -1,17 +1,20 @@
 name: Smoke test
 
-# Builds the image from this commit, starts it with no network dependencies
-# (network: custom, no hub, no peers) and exercises the HTTP surface with
-# scripts/smoke-test.sh. Nothing is pushed anywhere.
+# image:  build the image from this commit, start it with no network dependencies
+#         (network: custom, no hub, no peers) and exercise the HTTP surface.
+# binary: bare host + bare generator + anvil: node-URL bootstrap, P2P replication,
+#         attestations, the production USDC Lens view on wazero, kill -9 recovery
+#         (scripts/smoke-binary.sh). Nothing is pushed anywhere.
 on:
   pull_request:
+    paths-ignore: ["**.md", "adr/**", "adrs/**", "LICENSE"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  smoke:
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -68,3 +71,41 @@ jobs:
       - name: Logs on failure
         if: failure()
         run: docker logs host || true
+
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: host
+      # The generator that feeds the host. Same owner (fork-safe); the matching
+      # branch if it exists there, else main.
+      - name: Resolve generator ref
+        id: gen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="${{ github.repository_owner }}/shinzo-generator-client"
+          ref="${{ github.head_ref || github.ref_name }}"
+          if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$ref" >/dev/null 2>&1; then echo "ref=$ref"; else echo "ref=main"; fi >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.gen.outputs.repo }}
+          ref: ${{ steps.gen.outputs.ref }}
+          path: shinzo-generator-client
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: host/go.mod
+          cache: true
+          cache-dependency-path: |
+            host/go.sum
+            shinzo-generator-client/go.sum
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build both binaries
+        run: |
+          (cd host && go build -trimpath -ldflags="-s -w" -o bin/host cmd/main.go)
+          (cd shinzo-generator-client && go build -trimpath -ldflags="-s -w" -o bin/block_poster ./cmd/block_poster)
+      - name: Functional smoke (URL bootstrap, replication, attestations, lens, kill -9 recovery)
+        working-directory: host
+        run: scripts/smoke-binary.sh bin/host ../shinzo-generator-client/bin/block_poster

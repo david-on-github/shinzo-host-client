@@ -6,10 +6,12 @@ ARG TAGS=hostplayground
 
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN --mount=type=cache,target=/go/pkg/mod go mod download && go mod verify
 
 COPY . .
-RUN set -ex && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -ex && \
     if echo "$TAGS" | grep -q hostplayground; then (cd playground && go generate .); fi && \
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -tags="${TAGS}" -o bin/host cmd/main.go
 

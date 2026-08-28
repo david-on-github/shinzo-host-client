@@ -125,7 +125,9 @@ The same binary runs outside Docker with `CONFIG_PATH`, `SHINZO_DATA_DIR`, and t
 
 ## Verification
 
-Tested end to end on 2026-08-28 with both images built from this branch (native arm64), the local `dev-setup` hub, and `scripts/smoke-test.sh` against each node: config lookup, hub-derived and URL-resolved bootstrap peers, bidirectional P2P peering, DefraDB proxy, CORS, image healthchecks, named-volume state, and the standalone binary. Testing found and fixed four defects that unit tests had not caught:
+Tested end to end on 2026-08-28 with both images built from this branch (native arm64), the local `dev-setup` hub, and `scripts/smoke-test.sh` against each node: config lookup, hub-derived and URL-resolved bootstrap peers, bidirectional P2P peering, DefraDB proxy, CORS, image healthchecks, named-volume state, and the standalone binary. Both repos now carry this as CI (`smoke-test.yml`, PR-triggered, never publishes): an *image* job (build, start with no network dependencies, HTTP surface, graceful stop) and a *binary* job. The generator's binary job indexes tx-bearing blocks from anvil and recovers from `kill -9`. The host's binary job (`scripts/smoke-binary.sh`) runs a bare generator and a bare host against anvil with `Token.sol` placed at the USDC address, and asserts node-URL bootstrap, P2P replication, attestations, the production USDC Lens view returning transformed rows (the WASM transform executing on wazero with nothing installed), and `kill -9` recovery with an unchanged peer ID. Dockerfiles use BuildKit cache mounts so CI image builds reuse Go's module and build caches.
+
+Testing found and fixed four defects that unit tests had not caught:
 
 1. `cmd/main.go`'s `config.local.yaml` / `CONFIG_PATH` lookup had never been written (a failed script step), so the container loaded the baked-in defaults.
 2. `DEFRA_KEYRING_SECRET` was only read into `defradb.DefaultConfig` and ignored whenever a YAML config loaded — a pre-existing bug the README contradicted. `LoadConfig` now applies it; the test that asserted the old behaviour was flipped.
