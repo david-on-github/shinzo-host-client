@@ -45,11 +45,11 @@ The override is where local-only tweaks live (build from source, debug logging, 
 
 ## Configuration
 
-The image ships with working defaults for the `testnet` network; nothing needs to be mounted. The few things an operator picks are environment variables:
+The binary carries its own defaults for the `testnet` network — no config file is needed, and a passphrase for the node's keys is generated on first run and kept in the data directory (back it up). The few things an operator picks are environment variables (or the equivalent `--flags` on `shinzo-host run`):
 
 | Variable | Purpose |
 | --- | --- |
-| `SHINZO_KEY_PASSPHRASE` | Encrypts the node's identity keys on disk. Required. |
+| `SHINZO_KEY_PASSPHRASE` | Encrypts the node's identity keys on disk. Optional: generated on first run into `<data dir>/passphrase` if unset. |
 | `SHINZO_NETWORK` | `testnet` (default) or `custom`. Selects the built-in hub + bootstrap peers. |
 | `BOOTSTRAP_PEERS` | Comma-separated extra peers: node URLs, IPs, or multiaddrs. |
 | `ALLOWED_ORIGINS` | Extra browser origins allowed to call this node (CORS), added to the network's own apps (`https://*.shinzo.network`). |
@@ -58,7 +58,7 @@ The image ships with working defaults for the `testnet` network; nothing needs t
 | `SHINZO_KEY_PASSPHRASE_FILE` | Read the passphrase from a file (Docker/Kubernetes secrets) instead of the env var. |
 | `BOOTSTRAP_FROM_HUB` | `true` to also discover indexers from the hub registry (capped by `max_indexer_peers`). Off by default. |
 | `SOURCE_CHAIN_ID` | EVM chain the host consumes (default `1`, Ethereum mainnet). |
-| `SHINZO_DATA_DIR` | Where all node state lives (default `./data`; `/app/data` in the image). |
+| `SHINZO_DATA_DIR` | Where all node state lives (default `~/.shinzo/host`, XDG-aware; `/app/data` in the image). |
 | `CONFIG_PATH` | Use a specific config file instead of the built-in lookup. |
 
 Everything else lives in `config/config.yaml` (tuning knobs with sane defaults). To change those, mount your own copy as `/app/config.local.yaml` — see the override example.

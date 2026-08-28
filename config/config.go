@@ -9,7 +9,6 @@ import (
 
 	"github.com/shinzonetwork/shinzo-host-client/pkg/defradb"
 	"github.com/shinzonetwork/shinzo-host-client/pkg/pruner"
-	"gopkg.in/yaml.v3"
 )
 
 // CollectionName is the name of the collection where we store Shinzo-specific documents in DefraDB.
@@ -99,13 +98,18 @@ type LoggerConfig struct {
 type Config struct {
 	// Network selects a built-in preset (hub + bootstrap peers). See Networks().
 	// "custom" disables presets. Overridable with SHINZO_NETWORK.
-	Network    string        `yaml:"network"`
-	DefraDB    DefraDBConfig `yaml:"defradb"`
-	Shinzo     ShinzoConfig  `yaml:"shinzo"`
-	Schema     SchemaConfig  `yaml:"schema"`
-	Logger     LoggerConfig  `yaml:"logger"`
-	HostConfig HostConfig    `yaml:"host"`
-	Pruner     pruner.Config `yaml:"pruner"`
+	Network string        `yaml:"network"`
+	DefraDB DefraDBConfig `yaml:"defradb"`
+
+	// Resolved at load time, not from YAML.
+	Source              string        `yaml:"-"` // file path or "<built-in default>"
+	PassphraseFile      string        `yaml:"-"` // where the passphrase was read from / written to, if a file
+	PassphraseGenerated bool          `yaml:"-"` // true on the run that created PassphraseFile
+	Shinzo              ShinzoConfig  `yaml:"shinzo"`
+	Schema              SchemaConfig  `yaml:"schema"`
+	Logger              LoggerConfig  `yaml:"logger"`
+	HostConfig          HostConfig    `yaml:"host"`
+	Pruner              pruner.Config `yaml:"pruner"`
 }
 
 // SchemaConfig represents configuration for dynamic schema fetching.
@@ -239,26 +243,10 @@ type BlockRange struct {
 }
 
 // LoadConfig loads configuration from a YAML file.
+// LoadConfig loads configuration from a YAML file. See Load for the
+// no-file (compiled-in default) path.
 func LoadConfig(path string) (*Config, error) {
-	// Load YAML config
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
-
-	if err := applyEnvOverrides(&cfg); err != nil {
-		return nil, err
-	}
-	if err := applySchemaConfig(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+	return Load(path)
 }
 
 // applyEnvOverrides layers operator inputs from the environment over the
@@ -275,13 +263,6 @@ func applyEnvOverrides(cfg *Config) error {
 
 	if v := os.Getenv("BOOTSTRAP_PEERS"); v != "" {
 		cfg.DefraDB.P2P.BootstrapPeers = strings.Split(v, ",")
-	}
-
-	// SHINZO_DATA_DIR relocates all node state (database, keys, lens registry)
-	// in one go, for running the binary outside the repo / container.
-	if v := os.Getenv("SHINZO_DATA_DIR"); v != "" {
-		cfg.DefraDB.Store.Path = v
-		cfg.HostConfig.LensRegistryPath = filepath.Join(v, "lens")
 	}
 
 	if v := os.Getenv("BOOTSTRAP_FROM_HUB"); v != "" {

@@ -5,7 +5,8 @@ network: testnet
 
 defradb:
   url: "localhost:9181"
-  # Encrypts the node's identity keys on disk. Prefer the SHINZO_KEY_PASSPHRASE env var.
+  # Encrypts the node's identity keys on disk. Prefer the SHINZO_KEY_PASSPHRASE env
+  # var. Empty everywhere = generated on first run and kept in <data dir>/passphrase.
   keyring_secret: ""
   p2p:
     enabled: true
@@ -28,7 +29,7 @@ defradb:
     reconnect_interval_ms: 60000    # Check for disconnected peers every 60 seconds
     enable_auto_reconnect: true     # Automatically reconnect to failed/disconnected peers
   store:
-    path: "./data"
+    path: ""   # empty = SHINZO_DATA_DIR, else ~/.shinzo/host (XDG-aware). Docker sets /app/data.
     # Badger memory configuration
     block_cache_mb: 512  # Block cache size
     memtable_mb: 64      # Memtable size
@@ -134,7 +135,7 @@ logger:
   development: true
   level: "info"
 host:
-  lens_registry_path: "./data/lens"
+  lens_registry_path: ""   # empty = <data dir>/lens
   health_server_port: 8080
   open_browser_on_start: false
   # Public HTTP surface. The health server also proxies the embedded DefraDB

@@ -4,6 +4,7 @@
 FROM golang:1.26@sha256:dc2521c2a906db43073b8b4d99f491b6341cf15610b6ebbab187c45153f9959e AS builder
 
 ARG TAGS=hostplayground
+ARG VERSION=dev
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -14,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     set -ex && \
     if echo "$TAGS" | grep -q hostplayground; then (cd playground && go generate .); fi && \
-    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -tags="${TAGS}" -o bin/host cmd/main.go
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -tags="${TAGS}" -o bin/host cmd/main.go
 
 # Runtime stage
 # Digest-pinned; dependabot proposes updates.
@@ -28,7 +29,7 @@ LABEL org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.source=https://github.com/shinzonetwork/shinzo-host-client
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget \
+    ca-certificates tzdata \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g 1001 shinzo && useradd -u 1001 -g shinzo -m -s /bin/bash shinzo
@@ -45,6 +46,9 @@ VOLUME ["/app/data"]
 
 USER shinzo
 
+# All node state lives on the declared volume.
+ENV SHINZO_DATA_DIR=/app/data
+
 # Embedded DefraDB logging (corelog); the app logger honours LOG_LEVEL too.
 ENV LOG_LEVEL=error
 ENV LOG_SOURCE=false
@@ -54,6 +58,6 @@ ENV LOG_STACKTRACE=false
 EXPOSE 8080 9171
 
 HEALTHCHECK --interval=15s --timeout=30s --start-period=120s --retries=10 \
-    CMD wget -qO- http://localhost:8080/health >/dev/null || exit 1
+    CMD ["./host", "health"]
 
 CMD ["./host"]

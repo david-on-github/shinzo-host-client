@@ -49,12 +49,14 @@ To include the Playground UI in the image, pass `--build-arg TAGS=hostplayground
 The binary is self-contained. Once `make build` succeeds:
 
 ```shell
-export SHINZO_KEY_PASSPHRASE=<your-passphrase>
-export SHINZO_DATA_DIR=/var/lib/shinzo-host     # all node state goes here
-./bin/host
+./bin/host                       # that's it: joins testnet, state in ~/.shinzo/host, passphrase generated
+./bin/host --data-dir /var/lib/shinzo-host --network testnet
+./bin/host health                # exit 0 when the local node is healthy (probes, systemd)
+./bin/host id                    # peer ID + connection string to hand out
+./bin/host version
 ```
 
-No config file is needed; the compiled-in defaults join `testnet`. To customise, point `CONFIG_PATH` at your own copy of `config/config.yaml`. The same environment variables listed in the README work here exactly as they do under Docker. Nothing else needs to be installed.
+No config file is needed; the compiled-in defaults join `testnet`. To customise, pass `--config` (or `CONFIG_PATH`) pointing at your own copy of `config/config.yaml`. Every flag mirrors an environment variable, so the README's table applies here exactly as it does under Docker. Nothing else needs to be installed.
 
 A minimal systemd unit:
 
@@ -66,8 +68,8 @@ After=network-online.target
 [Service]
 User=shinzo
 Environment=SHINZO_DATA_DIR=/var/lib/shinzo-host
-EnvironmentFile=/etc/shinzo-host.env      # SHINZO_KEY_PASSPHRASE=..., SHINZO_NETWORK=...
-ExecStart=/usr/local/bin/shinzo-host
+EnvironmentFile=-/etc/shinzo-host.env     # optional: SHINZO_NETWORK=..., ALLOWED_ORIGINS=...
+ExecStart=/usr/local/bin/shinzo-host run
 Restart=on-failure
 
 [Install]
