@@ -19,6 +19,7 @@ import (
 var version = "dev" //nolint:gochecknoglobals
 
 const (
+	exitUsage       = 2 // conventional exit code for bad command-line usage
 	defaultHTTPPort = 8080
 	shutdownTimeout = 8 * time.Second // under Docker's default 10s stop grace period
 	clientTimeout   = 5 * time.Second
@@ -60,7 +61,7 @@ func main() {
 		fmt.Print(usage)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 }
 
@@ -73,7 +74,7 @@ func runNode(args []string) int {
 	network := fs.String("network", "", "network preset")
 	passphrase := fs.String("passphrase", "", "key passphrase")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	// Flags are sugar over the environment so there is exactly one config path.
 	for k, v := range map[string]string{"CONFIG_PATH": *cfgPath, "SHINZO_DATA_DIR": *dataDir, "SHINZO_NETWORK": *network, "SHINZO_KEY_PASSPHRASE": *passphrase} {
@@ -165,7 +166,7 @@ func healthCmd(args []string) int {
 	fs := flag.NewFlagSet("health", flag.ContinueOnError)
 	port := fs.Int("port", defaultHTTPPort, "HTTP port of the local node")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	body, code, err := getJSON(fmt.Sprintf("http://127.0.0.1:%d/health", *port))
 	if err != nil {
@@ -185,7 +186,7 @@ func idCmd(args []string) int {
 	fs := flag.NewFlagSet("id", flag.ContinueOnError)
 	port := fs.Int("port", defaultHTTPPort, "HTTP port of the local node")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return exitUsage
 	}
 	body, _, err := getJSON(fmt.Sprintf("http://127.0.0.1:%d/registration", *port))
 	if err != nil {
