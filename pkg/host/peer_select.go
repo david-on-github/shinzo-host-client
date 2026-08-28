@@ -21,10 +21,10 @@ import (
 //     stable pseudo-random order keyed by this node's peer ID (so different
 //     hosts spread across different indexers instead of all picking the same),
 //
-// and stops at max. Entries are deduplicated in order.
-func selectIndexerPeers(configured, discovered []string, selfPeerID string, max int) []string {
-	if max < 1 {
-		max = 1
+// and stops at limit. Entries are deduplicated in order.
+func selectIndexerPeers(configured, discovered []string, selfPeerID string, limit int) []string {
+	if limit < 1 {
+		limit = 1
 	}
 
 	seen := make(map[string]struct{})
@@ -58,14 +58,14 @@ func selectIndexerPeers(configured, discovered []string, selfPeerID string, max 
 	stableShuffle(candidates, selfPeerID)
 
 	for _, p := range candidates {
-		if len(out) >= max {
+		if len(out) >= limit {
 			break
 		}
 		add(p)
 	}
 
 	if skipped := len(configured) + len(candidates) - len(out); skipped > 0 {
-		logger.Sugar.Infof("Selected %d indexer peer(s) (max_indexer_peers=%d); %d candidate(s) not used", len(out), max, skipped)
+		logger.Sugar.Infof("Selected %d indexer peer(s) (max_indexer_peers=%d); %d candidate(s) not used", len(out), limit, skipped)
 	}
 	return out
 }

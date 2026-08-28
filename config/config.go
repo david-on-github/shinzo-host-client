@@ -251,11 +251,25 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return nil, err
+	}
+	if err := applySchemaConfig(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// applyEnvOverrides layers operator inputs from the environment over the
+// file, then resolves the network preset. Environment wins over the file.
+func applyEnvOverrides(cfg *Config) error {
+
 	// Apply environment variable overrides
 	if v := os.Getenv("START_HEIGHT"); v != "" {
 		height, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid START_HEIGHT value %q: %w", v, err)
+			return fmt.Errorf("invalid START_HEIGHT value %q: %w", v, err)
 		}
 		cfg.Shinzo.StartHeight = height
 	}
@@ -278,7 +292,7 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("SOURCE_CHAIN_ID"); v != "" {
 		id, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid SOURCE_CHAIN_ID value %q: %w", v, err)
+			return fmt.Errorf("invalid SOURCE_CHAIN_ID value %q: %w", v, err)
 		}
 		cfg.Shinzo.SourceChainID = id
 	}
@@ -293,7 +307,7 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.Shinzo.HubBaseURL = v
 	}
 	if err := cfg.applyNetworkPreset(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// ALLOWED_ORIGINS is a comma-separated list of browser origins, added to
@@ -317,11 +331,15 @@ func LoadConfig(path string) (*Config, error) {
 		// Docker/Kubernetes secrets are mounted as files; read the passphrase from one.
 		b, err := os.ReadFile(filepath.Clean(f))
 		if err != nil {
-			return nil, fmt.Errorf("read SHINZO_KEY_PASSPHRASE_FILE: %w", err)
+			return fmt.Errorf("read SHINZO_KEY_PASSPHRASE_FILE: %w", err)
 		}
 		cfg.DefraDB.KeyringSecret = strings.TrimSpace(string(b))
 	}
+	return nil
+}
 
+// applySchemaConfig resolves schema-fetch settings and validates the timeout.
+func applySchemaConfig(cfg *Config) error {
 	if v := os.Getenv("INDEXER_SCHEMA_ENDPOINT"); v != "" {
 		cfg.Schema.IndexerSchemaEndpoint = v
 	}
@@ -334,14 +352,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	switch {
 	case cfg.Schema.HTTPClientTimeoutSecs < 0:
-		return nil, fmt.Errorf("%w: got %d", ErrNegativeSchemaTimeout, cfg.Schema.HTTPClientTimeoutSecs)
+		return fmt.Errorf("%w: got %d", ErrNegativeSchemaTimeout, cfg.Schema.HTTPClientTimeoutSecs)
 	case cfg.Schema.HTTPClientTimeoutSecs > MaxSchemaHTTPClientTimeout:
-		return nil, fmt.Errorf("%w: got %d", ErrExcessiveSchemaTimeout, cfg.Schema.HTTPClientTimeoutSecs)
+		return fmt.Errorf("%w: got %d", ErrExcessiveSchemaTimeout, cfg.Schema.HTTPClientTimeoutSecs)
 	case cfg.Schema.HTTPClientTimeoutSecs == 0:
 		cfg.Schema.HTTPClientTimeoutSecs = DefaultSchemaHTTPClientTimeout
 	}
-
-	return &cfg, nil
+	return nil
 }
 
 // ToInternalConfig converts the host config to the pkg/defradb internal config

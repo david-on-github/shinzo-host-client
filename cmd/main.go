@@ -55,12 +55,16 @@ func main() {
 	stop()
 
 	fmt.Println("Shutting down...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := myHost.Close(shutdownCtx); err != nil {
+	if err := closeWithTimeout(myHost); err != nil {
 		fmt.Fprintf(os.Stderr, "shutdown error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func closeWithTimeout(h *host.Host) error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	return h.Close(ctx)
 }
 
 // shutdownTimeout bounds a graceful stop. Docker gives a container 10s

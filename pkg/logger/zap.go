@@ -44,14 +44,14 @@ func Init(development bool, logsDir string) {
 		logFile := filepath.Join(logsDir, "logfile.log")
 		errorFile := filepath.Join(logsDir, "errorfile.log")
 
-		if logFileWriter, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { // nolint:mnd
+		if logFileWriter, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { //nolint:mnd,gosec // LOG_DIR is operator-supplied
 			consoleCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), consoleWriter, zapLevel)
 			cores = append(cores, consoleCore)
 
 			logFileCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), zapcore.AddSync(logFileWriter), zapLevel)
 			cores = append(cores, logFileCore)
 
-			if errorFileWriter, err := os.OpenFile(filepath.Clean(errorFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { // nolint:mnd
+			if errorFileWriter, err := os.OpenFile(filepath.Clean(errorFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { //nolint:mnd,gosec // LOG_DIR is operator-supplied
 				errorCore := zapcore.NewCore(
 					zapcore.NewConsoleEncoder(encoderConfig),
 					zapcore.AddSync(errorFileWriter),
