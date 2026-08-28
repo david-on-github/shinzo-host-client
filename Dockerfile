@@ -1,6 +1,6 @@
 # Build stage. The binary is self-contained: lens transforms run on wazero
 # (pure Go), so no WASM runtime libraries are needed at build or run time.
-FROM golang:1.26 AS builder
+FROM golang:1.26@sha256:dc2521c2a906db43073b8b4d99f491b6341cf15610b6ebbab187c45153f9959e AS builder   # digest-pinned; dependabot proposes updates
 
 ARG TAGS=hostplayground
 
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -tags="${TAGS}" -o bin/host cmd/main.go
 
 # Runtime stage
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517   # digest-pinned; dependabot proposes updates
 
 # Set by the release workflow; harmless defaults for local builds.
 ARG VERSION=dev
