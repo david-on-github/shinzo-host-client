@@ -1,0 +1,171 @@
+name: Smoke test
+
+# image:  build the image from this commit, start it with no network dependencies
+#         (network: custom, no hub, no peers) and exercise the HTTP surface.
+# binary: bare host + bare generator + anvil: node-URL bootstrap, P2P replication,
+#         attestations, the production USDC Lens view on wazero, kill -9 recovery
+#         (scripts/smoke-binary.sh).
+# upgrade: build the PR's base commit, run it the way it shipped (./.defra,
+#         old config, old env names), then start the new binary on top of it
+#         (scripts/smoke-upgrade.sh). Nothing is pushed anywhere.
+on:
+  pull_request:
+    paths-ignore: ["**.md", "adr/**", "adrs/**", "LICENSE"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image (local only)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: smoke/shinzo-host:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start node
+        run: |
+          docker run -d --name host \
+            -p 8080:8080 \
+            -e SHINZO_NETWORK=custom \
+            -e SHINZO_KEY_PASSPHRASE=ci-only \
+            -e ALLOWED_ORIGINS=http://localhost:3000 \
+            -e LOG_LEVEL=debug \
+            smoke/shinzo-host:ci
+          for i in $(seq 1 60); do
+            s=$(docker inspect --format '{{.State.Health.Status}}' host 2>/dev/null || echo starting)
+            [ "$s" = healthy ] && break
+            [ "$s" = unhealthy ] && { docker logs host; exit 1; }
+            sleep 3
+          done
+          docker inspect --format 'health={{.State.Health.Status}}' host | grep -q healthy || { docker logs host; exit 1; }
+
+      - name: Smoke test HTTP surface
+        run: scripts/smoke-test.sh http://localhost:8080 http://localhost:3000 || { docker logs host; exit 1; }
+        # P2P peers is expected to be 0 with no bootstrap peers; the script
+        # counts it as a failure, so tolerate exactly that one.
+        continue-on-error: true
+
+      - name: Assert everything but the peer check passed
+        run: |
+          out=$(scripts/smoke-test.sh http://localhost:8080 http://localhost:3000 || true)
+          echo "$out"
+          echo "$out" | grep -q '8 passed, 1 failed' || { docker logs host; exit 1; }
+          echo "$out" | grep -q '❌ P2P peers' || exit 1
+
+      - name: Graceful stop within Docker's default grace period
+        run: |
+          start=$(date +%s); docker stop host; end=$(date +%s)
+          code=$(docker inspect --format '{{.State.ExitCode}}' host)
+          echo "stopped in $((end-start))s, exit $code"
+          [ "$code" = 0 ] && [ $((end-start)) -lt 10 ]
+
+      - name: Zero-config first run (no passphrase, no config) generates and persists a passphrase
+        run: |
+          docker volume create zc >/dev/null
+          docker run -d --name zc -v zc:/app/data -e SHINZO_NETWORK=custom smoke/shinzo-host:ci
+          for i in $(seq 1 60); do [ "$(docker inspect --format '{{.State.Health.Status}}' zc)" = healthy ] && break; sleep 3; done
+          docker logs zc | grep -q 'Passphrase   : generated' || { docker logs zc; exit 1; }
+          id1=$(docker logs zc | sed -n 's/.*Peer ID      : //p' | head -1)
+          docker exec zc sh -c 'test -s /app/data/passphrase && stat -c %a /app/data/passphrase' | grep -q 600
+          docker rm -f zc >/dev/null
+          docker run -d --name zc2 -v zc:/app/data -e SHINZO_NETWORK=custom smoke/shinzo-host:ci
+          for i in $(seq 1 60); do [ "$(docker inspect --format '{{.State.Health.Status}}' zc2)" = healthy ] && break; sleep 3; done
+          docker logs zc2 | grep -q 'Passphrase   : generated' && { echo "passphrase regenerated on restart"; exit 1; }
+          id2=$(docker logs zc2 | sed -n 's/.*Peer ID      : //p' | head -1)
+          [ -n "$id1" ] && [ "$id1" = "$id2" ] && echo "identity preserved across restart: $id1"
+          docker rm -f zc2 >/dev/null
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs host || true
+
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: host
+      # The generator that feeds the host. Same owner (fork-safe); the matching
+      # branch if it exists there, else main.
+      - name: Resolve generator ref
+        id: gen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="${{ github.repository_owner }}/shinzo-generator-client"
+          ref="${{ github.head_ref || github.ref_name }}"
+          if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$ref" >/dev/null 2>&1; then echo "ref=$ref"; else echo "ref=main"; fi >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.gen.outputs.repo }}
+          ref: ${{ steps.gen.outputs.ref }}
+          path: shinzo-generator-client
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: host/go.mod
+          cache: true
+          cache-dependency-path: |
+            host/go.sum
+            shinzo-generator-client/go.sum
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build both binaries
+        run: |
+          (cd host && go build -trimpath -ldflags="-s -w" -o bin/host cmd/main.go)
+          (cd shinzo-generator-client && go build -trimpath -ldflags="-s -w" -o bin/block_poster ./cmd/block_poster)
+      - name: Functional smoke (URL bootstrap, replication, attestations, lens, kill -9 recovery)
+        working-directory: host
+        run: scripts/smoke-binary.sh bin/host ../shinzo-generator-client/bin/block_poster
+
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: host
+      - name: Checkout the previous version (PR base, else main)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          path: host-old
+      - name: Resolve generator ref
+        id: gen
+        run: |
+          repo="${{ github.repository_owner }}/shinzo-generator-client"
+          ref="${{ github.head_ref || github.ref_name }}"
+          if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$ref" >/dev/null 2>&1; then echo "ref=$ref"; else echo "ref=main"; fi >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.gen.outputs.repo }}
+          ref: ${{ steps.gen.outputs.ref }}
+          path: shinzo-generator-client
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: host/go.mod
+          cache: true
+          cache-dependency-path: |
+            host/go.sum
+            host-old/go.sum
+            shinzo-generator-client/go.sum
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build old host, new host, generator
+        run: |
+          (cd host-old && go build -o bin/host cmd/main.go)
+          (cd host && go build -trimpath -ldflags="-s -w" -o bin/host cmd/main.go)
+          (cd shinzo-generator-client && go build -trimpath -ldflags="-s -w" -o bin/block_poster ./cmd/block_poster)
+      - name: Upgrade path (old layout + old env names -> new binary, same identity)
+        working-directory: host
+        run: scripts/smoke-upgrade.sh ../host-old/bin/host bin/host ../shinzo-generator-client/bin/block_poster

@@ -1,0 +1,34 @@
+# Local development overrides. Copy to docker-compose.override.yml (gitignored);
+# `docker compose up` merges it over docker-compose.yml automatically.
+#
+# Everything here is optional. Uncomment what you need.
+services:
+  shinzo-host:
+    # Until a multi-arch image is published, Apple Silicon needs this to pull
+    # the amd64 image (it then runs under Rosetta).
+    # platform: linux/amd64
+
+    # Build from source instead of pulling the published image. Give it a local
+    # name so a dev build never masquerades as (or gets pulled over by) the
+    # published image.
+    # build:
+    #   context: .
+    #   args:
+    #     TAGS: hostplayground   # include the GraphQL Playground UI on :9182
+    # image: shinzo-host:dev
+
+    # Cap memory on a laptop (production sizing is documented at docs.shinzo.network).
+    # mem_limit: 4g
+
+    # Use your own config instead of the baked-in defaults. The image looks
+    # for /app/config.local.yaml before /app/config.yaml.
+    # volumes:
+    #   - ./config/config.local.yaml:/app/config.local.yaml:ro
+
+    # Expose DefraDB / Playground directly for poking at the database.
+    # ports:
+    #   - "9181:9181"
+    #   - "9182:9182"
+
+    environment:
+      - LOG_LEVEL=debug

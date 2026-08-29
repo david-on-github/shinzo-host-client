@@ -32,6 +32,7 @@ type result struct {
 // Discovery requests are run in parallel to avoid sequential timeout delays.
 //
 // Supported input formats:
+//   - Node URL:          https://node.example  or  http://1.2.3.4:8080       (peer ID + port fetched from <url>/registration)
 //   - Full multiaddr:    /ip4/35.239.160.177/tcp/9171/p2p/12D3KooW...  (passed through as-is)
 //   - Without peer ID:   /ip4/35.239.160.177/tcp/9171                   (peer ID discovered automatically)
 //   - IPv6 multiaddr:    /ip6/::1/tcp/9171                              (peer ID discovered automatically)
@@ -44,13 +45,22 @@ func resolveBootstrapPeers(ctx context.Context, peers []string, timeout time.Dur
 		timeout = DefaultPeerDiscoveryTimeout
 	}
 
-	results := make([]result, 0, len(peers))
-	var mu sync.Mutex
+	collect := &resultCollector{results: make([]result, 0, len(peers))}
 	var wg sync.WaitGroup
 
 	for i, peerAddr := range peers {
 		peerAddr = strings.TrimSpace(peerAddr)
 		if peerAddr == "" {
+			continue
+		}
+
+		// Node URLs are resolved by asking the node for its own P2P address.
+		if isNodeURL(peerAddr) {
+			wg.Add(1)
+			go func(idx int, nodeURL string) {
+				defer wg.Done()
+				collect.resolveURL(ctx, idx, nodeURL, timeout)
+			}(i, peerAddr)
 			continue
 		}
 
@@ -63,9 +73,7 @@ func resolveBootstrapPeers(ctx context.Context, peers []string, timeout time.Dur
 
 		// If the multiaddr already contains a /p2p/ component, use as-is
 		if hasPeerID(maddr) {
-			mu.Lock()
-			results = append(results, result{index: i, addr: maddr.String()})
-			mu.Unlock()
+			collect.add(i, maddr.String())
 			logger.Sugar.Infof("📡 Bootstrap peer (configured): %s", maddr.String())
 			continue
 		}
@@ -74,31 +82,52 @@ func resolveBootstrapPeers(ctx context.Context, peers []string, timeout time.Dur
 		wg.Add(1)
 		go func(idx int, addr ma.Multiaddr) {
 			defer wg.Done()
-
-			logger.Sugar.Infof("🔍 Discovering peer ID for %s ...", addr.String())
-			fullAddr, err := discoverPeerID(ctx, addr, timeout)
-			if err != nil {
-				logger.Sugar.Warnf("⚠️ Failed to discover peer ID for %s: %v", addr.String(), err)
-				// Still add without peer ID — AddPeer may handle it or fail gracefully
-				mu.Lock()
-				results = append(results, result{index: idx, addr: addr.String()})
-				mu.Unlock()
-				return
-			}
-
-			mu.Lock()
-			results = append(results, result{index: idx, addr: fullAddr})
-			mu.Unlock()
-			logger.Sugar.Infof("📡 Bootstrap peer (discovered): %s", fullAddr)
+			collect.discover(ctx, idx, addr, timeout)
 		}(i, maddr)
 	}
 
 	wg.Wait()
 
 	// Sort by original index to maintain config ordering
-	sorted := makeSortedArray(results, peers)
+	return makeSortedArray(collect.results, peers)
+}
 
-	return sorted
+// resultCollector gathers resolved peers from concurrent lookups.
+type resultCollector struct {
+	mu      sync.Mutex
+	results []result
+}
+
+func (c *resultCollector) add(idx int, addr string) {
+	c.mu.Lock()
+	c.results = append(c.results, result{index: idx, addr: addr})
+	c.mu.Unlock()
+}
+
+// resolveURL turns a node URL into a full multiaddr via its /registration endpoint.
+func (c *resultCollector) resolveURL(ctx context.Context, idx int, nodeURL string, timeout time.Duration) {
+	logger.Sugar.Infof("🔍 Resolving node URL %s ...", nodeURL)
+	fullAddr, err := resolveNodeURL(ctx, nodeURL, timeout)
+	if err != nil {
+		logger.Sugar.Warnf("⚠️ Failed to resolve node URL %s: %v", nodeURL, err)
+		return
+	}
+	c.add(idx, fullAddr)
+	logger.Sugar.Infof("📡 Bootstrap peer (from URL): %s", fullAddr)
+}
+
+// discover fills in the peer ID for a multiaddr that lacks one.
+func (c *resultCollector) discover(ctx context.Context, idx int, addr ma.Multiaddr, timeout time.Duration) {
+	logger.Sugar.Infof("🔍 Discovering peer ID for %s ...", addr.String())
+	fullAddr, err := discoverPeerID(ctx, addr, timeout)
+	if err != nil {
+		logger.Sugar.Warnf("⚠️ Failed to discover peer ID for %s: %v", addr.String(), err)
+		// Still add without peer ID — AddPeer may handle it or fail gracefully
+		c.add(idx, addr.String())
+		return
+	}
+	c.add(idx, fullAddr)
+	logger.Sugar.Infof("📡 Bootstrap peer (discovered): %s", fullAddr)
 }
 
 func makeSortedArray(results []result, peers []string) []string {

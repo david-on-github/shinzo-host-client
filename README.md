@@ -22,10 +22,10 @@ Make sure `~/config.yaml` exists on the host machine, then:
 docker compose up
 ```
 
-Set your keyring secret before starting:
+Set the passphrase that encrypts your node's keys before starting — either export it or copy `.env.sample` to `.env` and fill it in:
 
 ```shell
-export DEFRA_KEYRING_SECRET=<your-secret>
+export SHINZO_KEY_PASSPHRASE=<your-passphrase>
 ```
 
 Further instructions, as well as hardware recommendations, can be found at [docs.shinzo.network](https://docs.shinzo.network/hosts/overview).
@@ -33,9 +33,37 @@ Further instructions, as well as hardware recommendations, can be found at [docs
 > [!TIP]
 > See [BUILD.md](./BUILD.md) for full build-from-source instructions.
 
+## Local development
+
+Copy the example override and edit it; `docker compose up` picks it up automatically and merges it over `docker-compose.yml`:
+
+```shell
+cp docker-compose.override.example.yml docker-compose.override.yml
+```
+
+The override is where local-only tweaks live (build from source, debug logging, memory limits). `docker-compose.yml` stays the reference deployment and is what operators run unchanged.
+
 ## Configuration
 
-The app reads from `config/config.yaml`. The only field you must set is `defradb.keyring_secret` (or the `DEFRA_KEYRING_SECRET` environment variable). Everything else has working defaults.
+The binary carries its own defaults for the `testnet` network — no config file is needed, and a passphrase for the node's keys is generated on first run and kept in the data directory (back it up). The few things an operator picks are environment variables (or the equivalent `--flags` on `shinzo-host run`):
+
+| Variable | Purpose |
+| --- | --- |
+| `SHINZO_KEY_PASSPHRASE` | Encrypts the node's identity keys on disk. Optional: generated on first run into `<data dir>/passphrase` if unset — convenient for dev, but then the passphrase lives beside the keys; for production supply it (or `_FILE`) and back it up separately. |
+| `TRUSTED_PROXIES` | CIDRs of reverse proxies whose `X-Forwarded-Host/Proto` are honoured. Unset = those headers are ignored. |
+| `SHINZO_NETWORK` | `testnet` (default) or `custom`. Selects the built-in hub + bootstrap peers. |
+| `BOOTSTRAP_PEERS` | Comma-separated extra peers: node URLs, IPs, or multiaddrs. |
+| `ALLOWED_ORIGINS` | Extra browser origins allowed to call this node (CORS), added to the network's own apps (`https://*.shinzo.network`). |
+| `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. |
+| `LOG_DIR` | Also write log files here. Unset = stdout only (the container/systemd default). |
+| `SHINZO_KEY_PASSPHRASE_FILE` | Read the passphrase from a file (Docker/Kubernetes secrets) instead of the env var. |
+| `P2P_ANNOUNCE_ADDR` | P2P address other nodes should dial when it differs from where you listen (NAT, port remap, DNS): e.g. `/dns4/node.example/tcp/9171`. |
+| `BOOTSTRAP_FROM_HUB` | `true` to also discover indexers from the hub registry (capped by `max_indexer_peers`). Off by default. |
+| `SOURCE_CHAIN_ID` | EVM chain the host consumes (default `1`, Ethereum mainnet). |
+| `SHINZO_DATA_DIR` | Where all node state lives (default `~/.shinzo/host`, XDG-aware; `/app/data` in the image). |
+| `CONFIG_PATH` | Use a specific config file instead of the built-in lookup. |
+
+Everything else lives in `config/config.yaml` (tuning knobs with sane defaults). To change those, mount your own copy as `/app/config.local.yaml` — see the override example.
 
 See [docs.shinzo.network](https://docs.shinzo.network/hosts/overview) for the full configuration reference.
 

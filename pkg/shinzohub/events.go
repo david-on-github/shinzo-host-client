@@ -112,13 +112,23 @@ func StartEventSubscription(tendermintURL string, lcd *RPCClient) (context.Cance
 	ctx, cancel := context.WithCancel(context.Background())
 	eventChan := make(chan ShinzoEvent, 16) //nolint:mnd
 
-	// Verify the URL is reachable before returning to the caller. This
-	// catches typos and DNS failures at startup instead of silently
-	// looping in the background.
+	// Try to connect now so a healthy hub is reported immediately, but a hub
+	// that is down or unreachable must not stop the node from starting: the
+	// node can serve and attest without it, and views arrive once it is back.
 	conn, err := dialAndSubscribe(tendermintURL)
 	if err != nil {
-		cancel()
-		return cancel, nil, fmt.Errorf("initial WebSocket connection failed: %w", err)
+		log().Warnf("ShinzoHub event subscription unavailable (%v); the node starts anyway and keeps retrying in the background", err)
+		go func() {
+			defer recoverPanic()
+			backoff := initialBackoff
+			c := reconnect(ctx, tendermintURL, &backoff, maxReconnectBackoff)
+			if c == nil { // cancelled before we ever connected
+				close(eventChan)
+				return
+			}
+			eventLoop(ctx, tendermintURL, c, eventChan, lcd)
+		}()
+		return cancel, eventChan, nil
 	}
 
 	go eventLoop(ctx, tendermintURL, conn, eventChan, lcd)
@@ -126,10 +136,17 @@ func StartEventSubscription(tendermintURL string, lcd *RPCClient) (context.Cance
 	return cancel, eventChan, nil
 }
 
+const (
+	initialBackoff      = time.Second
+	maxReconnectBackoff = 60 * time.Second
+	dialTimeout         = 5 * time.Second // a black-holed hub must not stall startup
+)
+
 // dialAndSubscribe opens a WebSocket to the CometBFT node and sends all
 // subscription requests. Returns the live connection or an error.
 func dialAndSubscribe(url string) (*websocket.Conn, error) {
-	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
+	dialer := websocket.Dialer{HandshakeTimeout: dialTimeout}
+	conn, resp, err := dialer.Dial(url, nil)
 	if resp != nil {
 		if cerr := resp.Body.Close(); cerr != nil {
 			log().Warnf("failed to close dial response body: %v", cerr)
@@ -177,8 +194,8 @@ func eventLoop(ctx context.Context, url string, conn *websocket.Conn, out chan<-
 	defer close(out)
 	defer recoverPanic()
 
-	backoff := time.Second
-	const maxBackoff = 60 * time.Second
+	backoff := initialBackoff
+	const maxBackoff = maxReconnectBackoff
 	pingStop := startPing(ctx, conn)
 	connectedAt := time.Now()
 

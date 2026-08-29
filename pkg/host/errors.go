@@ -13,6 +13,9 @@ var ( //nolint:revive
 	ErrNoPeerIDMismatchInfo = errors.New("error does not contain peer ID mismatch info") //nolint:revive
 	ErrMissingFilterFields  = errors.New("document missing required filter fields")      //nolint:revive
 	ErrEmptyMerkleRoot      = errors.New("empty merkleRoot")
+	ErrInvalidNodeURL       = errors.New("invalid node URL")                            //nolint:revive
+	ErrNodeURLUnavailable   = errors.New("node registration endpoint unavailable")      //nolint:revive
+	ErrNodeURLNoPeerID      = errors.New("node registration did not include a peer ID") //nolint:revive
 
 	errHubBaseURLMissing = errors.New("billing middleware enabled but the Shinzo hub base URL is not configured")
 )

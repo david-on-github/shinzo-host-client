@@ -26,6 +26,9 @@ go.work.sum
 
 .defra/
 .lens/
+data/
+docker-compose.override.yml
+config/config.local.yaml
 
 .vscode
 .idea
@@ -55,3 +58,5 @@ logs/
 
 /pkg/view/var/
 reviews/
+scripts/smoke/token/out/
+scripts/smoke/token/cache/

@@ -23,6 +23,13 @@ func Init(development bool, logsDir string) {
 	} else {
 		zapLevel = zap.InfoLevel
 	}
+	// LOG_LEVEL (debug|info|warn|error) applies to the app logger as well as
+	// DefraDB's, so one variable controls both.
+	if lvl := os.Getenv("LOG_LEVEL"); lvl != "" {
+		if parsed, err := zapcore.ParseLevel(lvl); err == nil {
+			zapLevel = parsed
+		}
+	}
 
 	encoderConfig := zap.NewDevelopmentEncoderConfig()
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
@@ -31,18 +38,20 @@ func Init(development bool, logsDir string) {
 
 	var cores []zapcore.Core
 
-	if err := os.MkdirAll(logsDir, 0o750); err == nil { // nolint:mnd
+	if logsDir == "" {
+		cores = append(cores, zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), consoleWriter, zapLevel))
+	} else if err := os.MkdirAll(logsDir, 0o750); err == nil { // nolint:mnd
 		logFile := filepath.Join(logsDir, "logfile.log")
 		errorFile := filepath.Join(logsDir, "errorfile.log")
 
-		if logFileWriter, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { // nolint:mnd
+		if logFileWriter, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { //nolint:mnd,gosec // LOG_DIR is operator-supplied
 			consoleCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), consoleWriter, zapLevel)
 			cores = append(cores, consoleCore)
 
 			logFileCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), zapcore.AddSync(logFileWriter), zapLevel)
 			cores = append(cores, logFileCore)
 
-			if errorFileWriter, err := os.OpenFile(filepath.Clean(errorFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { // nolint:mnd
+			if errorFileWriter, err := os.OpenFile(filepath.Clean(errorFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { //nolint:mnd,gosec // LOG_DIR is operator-supplied
 				errorCore := zapcore.NewCore(
 					zapcore.NewConsoleEncoder(encoderConfig),
 					zapcore.AddSync(errorFileWriter),

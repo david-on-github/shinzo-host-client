@@ -279,6 +279,9 @@ func TestRegistrationAppHandler_SuccessRedirect(t *testing.T) {
 	req.Host = "35.239.160.177:8080"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "host.example.com")
+	// These headers are only honoured from a trusted reverse proxy (nginx used to overwrite them).
+	req.RemoteAddr = "10.0.0.1:1234"
+	hs.trustedProxies = parseCIDRs([]string{"10.0.0.0/8"})
 	w := httptest.NewRecorder()
 
 	hs.registrationAppHandler(w, req)
@@ -557,6 +560,9 @@ func TestGetRegistrationData_WithHost(t *testing.T) {
 	req.Host = "203.0.113.25:8080"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "host.example.com")
+	// These headers are only honoured from a trusted reverse proxy (nginx used to overwrite them).
+	req.RemoteAddr = "10.0.0.1:1234"
+	hs.trustedProxies = parseCIDRs([]string{"10.0.0.0/8"})
 	reg, err := hs.getRegistrationData(req)
 	require.NoError(t, err)
 	require.NotNil(t, reg)

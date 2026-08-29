@@ -5,7 +5,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,13 +22,44 @@ var embeddedHealthStatusPageHTML string
 
 var healthStatusPagePath = filepath.Join("pkg", "server", "health_status_page.html") //nolint:gochecknoglobals
 
-// HealthServer provides HTTP endpoints for health checks and metrics.
+// HealthServer provides the node's public HTTP surface: health, metrics,
+// registration, and a reverse proxy to the embedded DefraDB API so browser
+// clients only need a single origin.
 type HealthServer struct {
 	server            *http.Server
 	host              HealthChecker
 	defraURL          string
 	hostMetrics       http.Handler
 	shinzoHubRESTBase string
+	tlsCertFile       string
+	tlsKeyFile        string
+	trustedProxies    []*net.IPNet
+	passphraseSource  string
+}
+
+// Option configures optional HealthServer behaviour.
+type Option func(*serverOptions)
+
+type serverOptions struct {
+	allowedOrigins   []string
+	tlsCertFile      string
+	tlsKeyFile       string
+	trustedProxies   []string
+	passphraseSource string
+}
+
+// WithAllowedOrigins enables CORS for the given browser origins ("*" allows any).
+// With no origins configured, no CORS headers are sent.
+func WithAllowedOrigins(origins []string) Option {
+	return func(o *serverOptions) { o.allowedOrigins = origins }
+}
+
+// WithTLS serves HTTPS using the given PEM certificate and key files.
+func WithTLS(certFile, keyFile string) Option {
+	return func(o *serverOptions) {
+		o.tlsCertFile = certFile
+		o.tlsKeyFile = keyFile
+	}
 }
 
 // HealthChecker interface for checking host health.
@@ -42,6 +76,9 @@ type P2PInfo struct {
 	Enabled  bool       `json:"enabled"`
 	Self     *PeerInfo  `json:"self,omitempty"`
 	PeerInfo []PeerInfo `json:"peers"`
+	// Announce is the operator-configured public P2P address (without /p2p/…),
+	// used in preference to anything derived from listen addresses or the request.
+	Announce string `json:"announce,omitempty"`
 }
 
 // PeerInfo represents information about a P2P peer, including ID, addresses, and optional public key.
@@ -62,6 +99,7 @@ type HealthResponse struct {
 	UptimeSeconds    float64              `json:"uptime_seconds"`
 	P2P              *P2PInfo             `json:"p2p,omitempty"`
 	Registration     *DisplayRegistration `json:"registration,omitempty"`
+	KeyPassphrase    string               `json:"key_passphrase,omitempty"` // "provided" | "generated"
 }
 
 // MetricsResponse represents basic metrics.
@@ -85,13 +123,24 @@ func NewHealthServer(
 	defraURL string,
 	metricsHandler http.Handler,
 	shinzoHubRESTBase string,
+	opts ...Option,
 ) *HealthServer {
+	var o serverOptions
+	for _, apply := range opts {
+		apply(&o)
+	}
+
+	// Config values are commonly host:port; the proxy and readiness checks need a scheme.
+	if defraURL != "" && !strings.Contains(defraURL, "://") {
+		defraURL = "http://" + defraURL
+	}
+
 	mux := http.NewServeMux()
 
 	hs := &HealthServer{
 		server: &http.Server{
 			Addr:         fmt.Sprintf(":%d", port),
-			Handler:      mux,
+			Handler:      corsMiddleware(o.allowedOrigins, mux),
 			ReadTimeout:  defaultHTTPClientTimeout * healthTimeoutMultiplier,
 			WriteTimeout: defaultHTTPClientTimeout * healthTimeoutMultiplier,
 		},
@@ -99,11 +148,16 @@ func NewHealthServer(
 		defraURL:          defraURL,
 		hostMetrics:       metricsHandler,
 		shinzoHubRESTBase: shinzoHubRESTBase,
+		tlsCertFile:       o.tlsCertFile,
+		tlsKeyFile:        o.tlsKeyFile,
+		trustedProxies:    parseCIDRs(o.trustedProxies),
+		passphraseSource:  o.passphraseSource,
 	}
 
 	// Register routes
 	mux.HandleFunc("/health", hs.healthHandler)
 	mux.HandleFunc("/registration", hs.registrationHandler)
+	mux.HandleFunc("/api/v0/registration", hs.registrationHandler) // backward-compatible alias
 	mux.HandleFunc("/registration-app", hs.registrationAppHandler)
 	mux.HandleFunc("/stats", hs.metricsHandler)
 	mux.HandleFunc("/", hs.rootHandler)
@@ -113,11 +167,44 @@ func NewHealthServer(
 		mux.Handle("/metrics", metricsHandler)
 	}
 
+	// Expose the embedded DefraDB API (GraphQL etc.) on this port so clients
+	// need a single origin. The exact /api/v0/registration pattern above wins
+	// over this prefix.
+	if proxy := newDefraProxy(defraURL); proxy != nil {
+		mux.Handle("/api/v0/", proxy)
+	}
+
 	return hs
 }
 
-// Start starts the health server.
+// newDefraProxy returns a reverse proxy to the DefraDB HTTP API, or nil if no
+// DefraDB URL is configured.
+func newDefraProxy(defraURL string) http.Handler {
+	if defraURL == "" {
+		return nil
+	}
+	if !strings.Contains(defraURL, "://") {
+		defraURL = "http://" + defraURL // config values are commonly host:port
+	}
+	target, err := url.Parse(defraURL)
+	if err != nil || target.Host == "" {
+		logger.Sugar.Warnf("Not proxying DefraDB API: invalid defra URL %q", defraURL)
+		return nil
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		logger.Sugar.Warnf("DefraDB proxy error: %v", err)
+		http.Error(w, "DefraDB unavailable", http.StatusBadGateway)
+	}
+	return proxy
+}
+
+// Start starts the health server, serving TLS if a certificate was configured.
 func (hs *HealthServer) Start() error {
+	if hs.tlsCertFile != "" || hs.tlsKeyFile != "" {
+		logger.Sugar.Infof("Starting health server (TLS) on %s", hs.server.Addr)
+		return hs.server.ListenAndServeTLS(hs.tlsCertFile, hs.tlsKeyFile)
+	}
 	logger.Sugar.Infof("Starting health server on %s", hs.server.Addr)
 	return hs.server.ListenAndServe()
 }
@@ -161,6 +248,7 @@ func (hs *HealthServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		UptimeSeconds:    uptime.Seconds(),
 	}
 
+	response.KeyPassphrase = hs.passphraseSource
 	if hs.host != nil {
 		response.CurrentBlock = hs.host.GetCurrentBlock()
 		response.LastProcessed = hs.host.GetLastProcessedTime()
@@ -331,4 +419,74 @@ func (hs *HealthServer) loadHealthStatusPageTemplate() []byte {
 	// Fallback to embedded version (for production or if file not found)
 	logger.Sugar.Debug("Using embedded health status page")
 	return []byte(embeddedHealthStatusPageHTML)
+}
+
+// trustsProxy reports whether forwarded headers from this request may be
+// believed: only when the request came from a configured trusted proxy. With
+// no proxies configured (the default), X-Forwarded-* is ignored entirely —
+// before the nginx sidecar was removed, nginx overwrote those headers, so a
+// client could never set them; this keeps that property without nginx.
+func (hs *HealthServer) trustsProxy(r *http.Request) bool {
+	if len(hs.trustedProxies) == 0 || r == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range hs.trustedProxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutForwardedHeaders returns r as-is when the sender is a trusted proxy,
+// otherwise a shallow clone with the X-Forwarded-* headers removed.
+func (hs *HealthServer) withoutForwardedHeaders(r *http.Request) *http.Request {
+	if hs.trustsProxy(r) {
+		return r
+	}
+	c := r.Clone(r.Context())
+	for _, h := range []string{"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For"} {
+		c.Header.Del(h)
+	}
+	return c
+}
+
+// WithTrustedProxies sets the CIDRs whose X-Forwarded-* headers are honoured.
+func WithTrustedProxies(cidrs []string) Option {
+	return func(o *serverOptions) { o.trustedProxies = cidrs }
+}
+
+// WithPassphraseSource records whether the node's key passphrase was provided
+// by the operator or generated on first run, for /health.
+func WithPassphraseSource(source string) Option {
+	return func(o *serverOptions) { o.passphraseSource = source }
+}
+
+func parseCIDRs(cidrs []string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if !strings.Contains(c, "/") { // bare IP
+			if strings.Contains(c, ":") {
+				c += "/128"
+			} else {
+				c += "/32"
+			}
+		}
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }

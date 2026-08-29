@@ -1,19 +1,39 @@
+# Which Shinzo network to join. Selects the built-in hub + bootstrap peers
+# (see config/networks.go). Use "custom" to supply everything yourself.
+# Overridable with SHINZO_NETWORK.
+network: testnet
+
 defradb:
   url: "localhost:9181"
-  keyring_secret: "pingpong"
+  # Encrypts the node's identity keys on disk. Prefer the SHINZO_KEY_PASSPHRASE env
+  # var. Empty everywhere = generated on first run and kept in <data dir>/passphrase.
+  keyring_secret: ""
   p2p:
     enabled: true
-    bootstrap_peers:
-      - '/ip4/35.254.135.221/tcp/9171/p2p/12D3KooWDUdHSCXBM5Wb7te6ZdWMgqddw7tJ7npWSzXK5tQgBsbT' # IND1
-      - '/ip4/34.57.239.57/tcp/9171/p2p/12D3KooWBAgCEJHYqzuCFEXzjsw2CnV9JqvqMgTKYDww58aCxwW5' # IND2
-      - '/ip4/34.134.119.63/tcp/9171/p2p/12D3KooWQQTuSQaz4HfuvnJHakkQy3PhWbKBBbS3RkmBw4ZsFkyT' # IND3
+    # Extra peers to connect to on startup, in addition to the network's
+    # built-in ones. Each entry may be a node URL (https://node.example — the
+    # P2P address is fetched from its /registration endpoint), an IP or
+    # IP:port, or a full libp2p multiaddr. Overridable with BOOTSTRAP_PEERS.
+    bootstrap_peers: []
+    # Opt in to discovering indexers from ShinzoHub's registry on startup.
+    # Off by default: every indexer peer streams a full copy of every block,
+    # so which indexers to listen to is a deliberate choice (the network
+    # preset + bootstrap_peers), not something derived from who registered.
+    bootstrap_from_hub: false
+    # When bootstrap_from_hub is on: how many indexers to replicate from in
+    # total. 0 = minimum_attestations + 1.
+    max_indexer_peers: 0
     listen_addr: "/ip4/0.0.0.0/tcp/9171"
+    # What other nodes should dial, if different from where we listen (NAT,
+    # port remap, DNS name), e.g. "/dns4/node.example/tcp/9171". Empty = derive
+    # from the listen address. Overridable with P2P_ANNOUNCE_ADDR.
+    announce_addr: ""
     max_retries: 5                  # Number of connection attempts before marking peer as failed
     retry_base_delay_ms: 1000       # Base delay for exponential backoff (1s, 2s, 4s, 8s, 16s)
     reconnect_interval_ms: 60000    # Check for disconnected peers every 60 seconds
     enable_auto_reconnect: true     # Automatically reconnect to failed/disconnected peers
   store:
-    path: "./.defra"
+    path: ""   # empty = SHINZO_DATA_DIR, else ~/.shinzo/host (XDG-aware). Docker sets /app/data.
     # Badger memory configuration
     block_cache_mb: 512  # Block cache size
     memtable_mb: 64      # Memtable size
@@ -26,8 +46,10 @@ defradb:
     value_log_file_size_mb: 128     # Size of each vlog file (smaller = faster GC)
 shinzo:
   minimum_attestations: 1
+  source_chain_id: 1   # EVM chain the host consumes (1 = Ethereum mainnet); filters hub indexers
   start_height: 0 # Indexer auto-detects from chain tip
-  hub_base_url: testnet.shinzo.network
+  # ShinzoHub hostname (no scheme/port). Empty = the network preset's hub.
+  hub_base_url: ""
   # P2P Control Settings
   wait_for_gaps: true         # Wait for gap processing before starting P2P
   max_gap_size: 1000          # Skip P2P if gap is larger than this
@@ -109,7 +131,7 @@ pruner:
   prune_history: true       # true: each prune also deletes the removed docs' block history (walks their DAG, slower per prune); false keeps it, so the blockstore only grows.
 schema:
   indexer_schema_endpoint: /api/v1/schema
-  http_client_timeout_secs: 30
+  http_client_timeout_secs: 10   # schema fetch at startup; the embedded schema is the fallback
   # ⚠ auth_token is NOT configurable in this file (the field uses yaml:"-").
   # You MUST set the token via the INDEXER_SCHEMA_ENDPOINT_AUTH_TOKEN environment variable.
   # Example: INDEXER_SCHEMA_ENDPOINT_AUTH_TOKEN=my-secret-token
@@ -117,14 +139,33 @@ logger:
   development: true
   level: "info"
 host:
-  lens_registry_path: "./.defra/lens"
+  lens_registry_path: ""   # empty = <data dir>/lens
   health_server_port: 8080
   open_browser_on_start: false
+  # Public HTTP surface. The health server also proxies the embedded DefraDB
+  # API under /api/v0/, so browser clients only need this one port.
+  http:
+    # Extra browser origins allowed to call this node, in addition to the
+    # network's own apps (https://*.shinzo.network from the preset).
+    # With network: custom and nothing here, no CORS headers are sent.
+    allowed_origins: []
+    #  - "https://explorer.shinzo.network"
+    #  - "http://localhost:3000"
+    # Serve HTTPS directly (leave empty to serve plain HTTP, or terminate TLS
+    # in your own reverse proxy).
+    tls:
+      cert_file: ""
+      key_file: ""
+    # Reverse proxies (CIDRs or IPs) whose X-Forwarded-Host/Proto we honour when
+    # advertising this node's endpoint. Empty = ignore those headers.
+    trusted_proxies: []
   # Snapshot Bootstrap - download historical data from an indexer on first startup.
   # Set enabled: false to skip snapshot import entirely.
   snapshot:
     enabled: false
-    indexer_url: "http://35.206.105.60:8080"
+    # Indexer to fetch the current schema (and snapshots, if enabled) from.
+    # Empty = use the schema compiled into the binary and skip the fetch.
+    indexer_url: ""
     historical_ranges:
       - start: 24528700
         end: 24528999
