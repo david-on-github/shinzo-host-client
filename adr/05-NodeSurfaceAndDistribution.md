@@ -92,7 +92,11 @@ The reference compose stays minimal on purpose: `init`, `security_opt`, `stop_gr
 
 Deliberately not done: `read_only: true` root filesystem (Badger and the WASM runtimes' temp-file behaviour need verifying first) and image signing (cosign) — both worthwhile follow-ups.
 
-### 9. The binary runs standalone
+### 9. The hub is not a startup dependency
+
+A host must come up without ShinzoHub: it can serve, replicate and attest without it, and views arrive once the hub is back. The event-subscription websocket now warns and keeps retrying with backoff instead of failing startup; both it and the LCD client use a 5 s connect timeout so a black-holed hub costs seconds, not the full request timeout (measured: 37 s → 10 s to healthy). Likewise the startup schema fetch is opt-in (`snapshot.indexer_url` empty by default, embedded schema otherwise) with a 10 s timeout — the shipped default used to point at a Shinzo IP and stall every first run for 30 s.
+
+### 10. The binary runs standalone
 
 The same binary runs outside Docker with `CONFIG_PATH`, `SHINZO_DATA_DIR`, and the same environment variables; `BUILD.md` documents this plus a systemd unit. It has no external dependencies: Lens transforms run on wazero (pure Go), and the binary links only libc. The Dockerfiles used to download wasmtime and wasmer and ship them in the runtime image — leftovers from an earlier Lens engine, verified dead with `ldd`/`otool` and removed. Binaries are built with `-trimpath -ldflags="-s -w"`, and the host prints a three-line banner on startup (API URL, peer ID, registration URL) so a first run explains itself.
 
@@ -119,7 +123,7 @@ The same binary runs outside Docker with `CONFIG_PATH`, `SHINZO_DATA_DIR`, and t
 4. **DNS seeds instead of IPs.** Replace the literal multiaddrs in `networks.go` with node URLs (`https://ind1.testnet.shinzo.network`) or a libp2p `/dnsaddr/` TXT record, so the static fallback is also release-free.
 5. ~~Auto-generated keyring secret~~ Done: with no `SHINZO_KEY_PASSPHRASE`, the node generates a 256-bit passphrase into `<data dir>/passphrase` (0600) on first run and reuses it; the banner says where it is. The default config is compiled into the binary, the data dir defaults to `~/.shinzo/host` (XDG-aware; `/app/data` in the image), and `shinzo-host run|health|id|version` with `--config/--data-dir/--network/--passphrase` flags mirror the environment variables. `health` replaces `wget` in the image's HEALTHCHECK.
 6. ~~One image per version.~~ Done: the `-ethereum-mainnet` suffix turned out to be a label only (the `CHAIN`/`NETWORK` build args it produced were never declared in the Dockerfile). `release.yml` now triggers on `v*` and publishes multi-arch `vX.Y.Z` + `latest`. The compose files pin the last suffixed tag until the next release.
-7. **Advertise a public P2P address.** Add `p2p.announce_addr` (libp2p announce addresses) so `/registration` reports the address peers should dial, not the listen address — fixes URL resolution behind port remaps and NAT.
+7. ~~Advertise a public P2P address.~~ Done: `defradb.p2p.announce_addr` / `P2P_ANNOUNCE_ADDR` (both repos) is what `/registration` reports and what node-URL bootstrap resolves to — e.g. `/dns4/node.example/tcp/9171` behind NAT or a port remap.
 8. **Tunnelled P2P for NAT'd operators** via libp2p's WebSocket transport, so Cloudflare Tunnel / Tailscale Funnel can carry both HTTP and P2P.
 9. **Generator parity** for network presets and hub-derived peers, if generators ever peer with each other.
 
