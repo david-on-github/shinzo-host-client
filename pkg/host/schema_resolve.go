@@ -18,6 +18,10 @@ func resolveSchema(ctx context.Context, cfg *config.Config) string {
 
 	var resolvedSchema string
 	switch {
+	case cfg.HostConfig.Snapshot.IndexerURL == "":
+		logger.Sugar.Info("No indexer URL configured; using the embedded schema")
+		resolvedSchema = schema.GetSchema()
+
 	case parseErr != nil || parsedURL.Scheme == "" || parsedURL.Host == "":
 		logger.Sugar.Warnf("Invalid indexer URL, using embedded schema: %s", cfg.HostConfig.Snapshot.IndexerURL)
 		resolvedSchema = schema.GetSchema()

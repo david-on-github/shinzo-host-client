@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -35,6 +36,13 @@ func NewRPCClient(lcdURL string, defraNode *node.Node) *RPCClient {
 		defraNode: defraNode,
 		httpClient: &http.Client{
 			Timeout: httpClientTimeout,
+			// Connect fast or fail fast: an unreachable hub must not stall startup
+			// for the full request timeout (which is sized for slow LCD pages).
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
+				TLSHandshakeTimeout:   dialTimeout,
+				ResponseHeaderTimeout: httpClientTimeout,
+			},
 		},
 	}
 }

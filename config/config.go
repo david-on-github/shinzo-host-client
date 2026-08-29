@@ -17,7 +17,7 @@ const CollectionName = "shinzo"
 // Default configuration values for schema fetching.
 const (
 	DefaultIndexerSchemaEndpoint   = "/api/v1/schema"
-	DefaultSchemaHTTPClientTimeout = 30
+	DefaultSchemaHTTPClientTimeout = 10
 	MaxSchemaHTTPClientTimeout     = 300
 )
 
@@ -53,6 +53,11 @@ type DefraDBP2PConfig struct {
 	ReconnectIntervalMs    int      `yaml:"reconnect_interval_ms"`
 	EnableAutoReconnect    bool     `yaml:"enable_auto_reconnect"`
 	PeerDiscoveryTimeoutMs int      `yaml:"peer_discovery_timeout_ms"` // Timeout for auto-discovering peer IDs (default: 10000)
+	// AnnounceAddr is the P2P address other nodes should dial, when it differs
+	// from where we listen: behind NAT, a port remap (-p 19171:9171), or a DNS
+	// name ("/dns4/node.example/tcp/9171"). It is what /registration advertises
+	// and what node-URL bootstrap resolves to. Overridable with P2P_ANNOUNCE_ADDR.
+	AnnounceAddr string `yaml:"announce_addr"`
 	// BootstrapFromHub asks ShinzoHub for registered indexers on startup and
 	// peers with a capped selection of them (see MaxIndexerPeers). Off by
 	// default: every indexer peer streams a full copy of every block, so which
@@ -263,6 +268,10 @@ func applyEnvOverrides(cfg *Config) error {
 
 	if v := os.Getenv("BOOTSTRAP_PEERS"); v != "" {
 		cfg.DefraDB.P2P.BootstrapPeers = strings.Split(v, ",")
+	}
+
+	if v := os.Getenv("P2P_ANNOUNCE_ADDR"); v != "" {
+		cfg.DefraDB.P2P.AnnounceAddr = v
 	}
 
 	if v := os.Getenv("BOOTSTRAP_FROM_HUB"); v != "" {

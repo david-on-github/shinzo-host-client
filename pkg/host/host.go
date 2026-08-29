@@ -451,7 +451,7 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 			cancelEventHandler()
 		}
 
-		if err != nil {
+		if err != nil { // only for malformed URLs; an unreachable hub is retried in the background
 			return nil, fmt.Errorf("error starting event subscription: %w", err)
 		}
 	}
@@ -634,6 +634,9 @@ func (h *Host) GetPeerInfo() (*server.P2PInfo, error) {
 			ID:        ownPeers[0].ID,
 			Addresses: addresses,
 		}
+	}
+	if h.config != nil {
+		p2pInfo.Announce = h.config.DefraDB.P2P.AnnounceAddr
 	}
 
 	// Get actually connected peers

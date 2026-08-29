@@ -319,7 +319,7 @@ func TestLoadConfig_SchemaHTTPClientTimeout_Default(t *testing.T) {
 
 	cfg, err := LoadConfig(configPath)
 	require.NoError(t, err)
-	require.Equal(t, 30, cfg.Schema.HTTPClientTimeoutSecs)
+	require.Equal(t, DefaultSchemaHTTPClientTimeout, cfg.Schema.HTTPClientTimeoutSecs)
 }
 
 func TestLoadConfig_SchemaHTTPClientTimeout_Negative(t *testing.T) {

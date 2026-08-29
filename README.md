@@ -56,6 +56,7 @@ The binary carries its own defaults for the `testnet` network — no config file
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. |
 | `LOG_DIR` | Also write log files here. Unset = stdout only (the container/systemd default). |
 | `SHINZO_KEY_PASSPHRASE_FILE` | Read the passphrase from a file (Docker/Kubernetes secrets) instead of the env var. |
+| `P2P_ANNOUNCE_ADDR` | P2P address other nodes should dial when it differs from where you listen (NAT, port remap, DNS): e.g. `/dns4/node.example/tcp/9171`. |
 | `BOOTSTRAP_FROM_HUB` | `true` to also discover indexers from the hub registry (capped by `max_indexer_peers`). Off by default. |
 | `SOURCE_CHAIN_ID` | EVM chain the host consumes (default `1`, Ethereum mainnet). |
 | `SHINZO_DATA_DIR` | Where all node state lives (default `~/.shinzo/host`, XDG-aware; `/app/data` in the image). |

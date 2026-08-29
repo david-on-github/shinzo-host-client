@@ -71,6 +71,9 @@ type P2PInfo struct {
 	Enabled  bool       `json:"enabled"`
 	Self     *PeerInfo  `json:"self,omitempty"`
 	PeerInfo []PeerInfo `json:"peers"`
+	// Announce is the operator-configured public P2P address (without /p2p/…),
+	// used in preference to anything derived from listen addresses or the request.
+	Announce string `json:"announce,omitempty"`
 }
 
 // PeerInfo represents information about a P2P peer, including ID, addresses, and optional public key.

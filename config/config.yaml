@@ -24,6 +24,10 @@ defradb:
     # total. 0 = minimum_attestations + 1.
     max_indexer_peers: 0
     listen_addr: "/ip4/0.0.0.0/tcp/9171"
+    # What other nodes should dial, if different from where we listen (NAT,
+    # port remap, DNS name), e.g. "/dns4/node.example/tcp/9171". Empty = derive
+    # from the listen address. Overridable with P2P_ANNOUNCE_ADDR.
+    announce_addr: ""
     max_retries: 5                  # Number of connection attempts before marking peer as failed
     retry_base_delay_ms: 1000       # Base delay for exponential backoff (1s, 2s, 4s, 8s, 16s)
     reconnect_interval_ms: 60000    # Check for disconnected peers every 60 seconds
@@ -127,7 +131,7 @@ pruner:
   prune_history: true       # true: each prune also deletes the removed docs' block history (walks their DAG, slower per prune); false keeps it, so the blockstore only grows.
 schema:
   indexer_schema_endpoint: /api/v1/schema
-  http_client_timeout_secs: 30
+  http_client_timeout_secs: 10   # schema fetch at startup; the embedded schema is the fallback
   # ⚠ auth_token is NOT configurable in this file (the field uses yaml:"-").
   # You MUST set the token via the INDEXER_SCHEMA_ENDPOINT_AUTH_TOKEN environment variable.
   # Example: INDEXER_SCHEMA_ENDPOINT_AUTH_TOKEN=my-secret-token
@@ -156,7 +160,9 @@ host:
   # Set enabled: false to skip snapshot import entirely.
   snapshot:
     enabled: false
-    indexer_url: "http://35.206.105.60:8080"
+    # Indexer to fetch the current schema (and snapshots, if enabled) from.
+    # Empty = use the schema compiled into the binary and skip the fetch.
+    indexer_url: ""
     historical_ranges:
       - start: 24528700
         end: 24528999
