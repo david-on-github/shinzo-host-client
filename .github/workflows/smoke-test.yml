@@ -68,6 +68,22 @@ jobs:
           echo "stopped in $((end-start))s, exit $code"
           [ "$code" = 0 ] && [ $((end-start)) -lt 10 ]
 
+      - name: Zero-config first run (no passphrase, no config) generates and persists a passphrase
+        run: |
+          docker volume create zc >/dev/null
+          docker run -d --name zc -v zc:/app/data -e SHINZO_NETWORK=custom smoke/shinzo-host:ci
+          for i in $(seq 1 60); do [ "$(docker inspect --format '{{.State.Health.Status}}' zc)" = healthy ] && break; sleep 3; done
+          docker logs zc | grep -q 'Passphrase   : generated' || { docker logs zc; exit 1; }
+          id1=$(docker logs zc | sed -n 's/.*Peer ID      : //p' | head -1)
+          docker exec zc sh -c 'test -s /app/data/passphrase && stat -c %a /app/data/passphrase' | grep -q 600
+          docker rm -f zc >/dev/null
+          docker run -d --name zc2 -v zc:/app/data -e SHINZO_NETWORK=custom smoke/shinzo-host:ci
+          for i in $(seq 1 60); do [ "$(docker inspect --format '{{.State.Health.Status}}' zc2)" = healthy ] && break; sleep 3; done
+          docker logs zc2 | grep -q 'Passphrase   : generated' && { echo "passphrase regenerated on restart"; exit 1; }
+          id2=$(docker logs zc2 | sed -n 's/.*Peer ID      : //p' | head -1)
+          [ -n "$id1" ] && [ "$id1" = "$id2" ] && echo "identity preserved across restart: $id1"
+          docker rm -f zc2 >/dev/null
+
       - name: Logs on failure
         if: failure()
         run: docker logs host || true

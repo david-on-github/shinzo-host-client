@@ -8,6 +8,8 @@
 #              Lens view (WASM transform executed on wazero, no runtime installed).
 #  Phase 2: kill -9 the host, restart on the same data dir + passphrase:
 #           identity, peers, attestations and the view must all come back.
+#  Phase 3: kill -9 the GENERATOR and restart it: the host must reconnect on
+#           its own (auto-reconnect) and keep attesting new blocks.
 #
 # Usage: scripts/smoke-binary.sh <host-binary> <generator-binary>
 #   run from the host repo root; needs anvil, cast, forge, curl, python3.
@@ -23,8 +25,10 @@ WORKDIR="$(mktemp -d)"
 GEN_LOG="$WORKDIR/generator.log"
 HOST_LOG="$WORKDIR/host.log"
 
-# Generator on its defaults (8080 / 9181 / 9171); host on shifted ports.
-GEN_HTTP=8080
+# Both nodes on shifted ports so the test never collides with a running container.
+GEN_HTTP=8084
+GEN_DEFRA=9185
+GEN_P2P=9175
 HOST_HTTP=8082
 HOST_DEFRA=9183
 HOST_P2P=9173
@@ -69,11 +73,16 @@ TX_PID=$!
 GEN_DIR="$WORKDIR/generator"; mkdir -p "$GEN_DIR"
 cp -r "$(dirname "$(dirname "$GEN_BIN")")/config" "$GEN_DIR/config" 2>/dev/null \
   || cp -r "$REPO_ROOT/../shinzo-generator-client/config" "$GEN_DIR/config"
-( cd "$GEN_DIR" && \
-  GETH_RPC_URL="$RPC" GETH_WS_URL="ws://127.0.0.1:$ANVIL_PORT" GETH_API_KEY= GETH_API_KEY_TYPE= \
-  SCHEMA_AUTH_MODE=none SHINZO_KEY_PASSPHRASE=smoke-gen DEFRADB_KEYRING_SECRET=smoke-gen LOG_LEVEL=info \
-  "$GEN_BIN" >>"$GEN_LOG" 2>&1 ) &
-GEN_PID=$!
+start_generator() {
+  # exec so $GEN_PID is the binary itself (not a subshell) and kill actually stops it.
+  ( cd "$GEN_DIR" && exec env \
+    GETH_RPC_URL="$RPC" GETH_WS_URL="ws://127.0.0.1:$ANVIL_PORT" GETH_API_KEY= GETH_API_KEY_TYPE= \
+    SCHEMA_AUTH_MODE=none SHINZO_KEY_PASSPHRASE=smoke-gen DEFRADB_KEYRING_SECRET=smoke-gen SHINZO_DATA_DIR="$GEN_DIR/data" LOG_LEVEL=info \
+    DEFRADB_URL="http://localhost:$GEN_DEFRA" DEFRADB_P2P_LISTEN_ADDR="/ip4/0.0.0.0/tcp/$GEN_P2P" INDEXER_HEALTH_SERVER_PORT="$GEN_HTTP" \
+    "$GEN_BIN" >>"$GEN_LOG" 2>&1 ) &
+  GEN_PID=$!
+}
+start_generator
 for _ in $(seq 1 60); do
   commits=$(grep -c "Committed block" "$GEN_LOG" 2>/dev/null || true)
   [ "${commits:-0}" -ge 3 ] && curl -sf -m 3 -H 'Accept: application/json' "http://127.0.0.1:$GEN_HTTP/health" >/dev/null && break
@@ -100,11 +109,12 @@ s = s.replace('health_server_port: 8080', f'health_server_port: {http}', 1)
 s = s.replace('bootstrap_peers: []', f"bootstrap_peers: ['http://127.0.0.1:{gen}']", 1)
 s = re.sub(r'^  hub_base_url: .*$', '  hub_base_url: ""', s, flags=re.M)
 s = re.sub(r'^\s*indexer_url: .*$', '    indexer_url: ""', s, flags=re.M)   # no snapshot bootstrap
+s = re.sub(r'^(\s*reconnect_interval_ms:) .*$', r'\1 5000', s, flags=re.M)     # reconnect quickly in the test (default 60s)
 open(dst, 'w').write(s)
 PY
 
 start_host() {
-  ( cd "$WORKDIR" && \
+  ( cd "$WORKDIR" && exec env \
     CONFIG_PATH="$HOST_CFG" SHINZO_DATA_DIR="$HOST_DATA" SHINZO_KEY_PASSPHRASE=smoke-host LOG_LEVEL=info \
     "$HOST_BIN" >>"$HOST_LOG" 2>&1 ) &
   HOST_PID=$!
@@ -145,4 +155,17 @@ start_host
 await_host $((P1 + 2)) "phase2-recovery" 180
 PEER_ID2=$(curl -sf -H 'Accept: application/json' "http://127.0.0.1:$HOST_HTTP/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["p2p"]["self"]["id"])')
 [ "$PEER_ID" = "$PEER_ID2" ] || { echo "FAIL(phase2): peer id changed after restart ($PEER_ID -> $PEER_ID2)"; exit 1; }
-echo "PASS: URL bootstrap, P2P replication, attestations, wazero lens view, and crash recovery all verified"
+# ---- Phase 3: the generator crashes and comes back; the host must reconnect by itself -----------
+P2=$(attestations)
+echo "killing generator with SIGKILL (pid $GEN_PID)..."
+kill -9 "$GEN_PID"; sleep 2
+for _ in $(seq 1 10); do [ "$(peers)" = 0 ] && break; sleep 2; done
+echo "host sees $(peers) peer(s) while generator is down"
+start_generator
+for _ in $(seq 1 45); do
+  commits=$(grep -c "Committed block" "$GEN_LOG" 2>/dev/null || true)
+  curl -sf -m 3 -H 'Accept: application/json' "http://127.0.0.1:$GEN_HTTP/health" >/dev/null && break
+  sleep 2
+done
+await_host $((P2 + 2)) "phase3-peer-restart" 180
+echo "PASS: URL bootstrap, P2P replication, attestations, wazero lens view, host crash recovery, and peer-restart reconnection all verified"
