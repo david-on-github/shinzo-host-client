@@ -10,6 +10,9 @@
 #           identity, peers, attestations and the view must all come back.
 #  Phase 3: kill -9 the GENERATOR and restart it: the host must reconnect on
 #           its own (auto-reconnect) and keep attesting new blocks.
+#  Phase 4: a SECOND host bootstraps from the first host's URL (not the
+#           generator): primitives must reach it through host-to-host
+#           replication, and it must attest and serve the Lens view too.
 #
 # Usage: scripts/smoke-binary.sh <host-binary> <generator-binary>
 #   run from the host repo root; needs anvil, cast, forge, curl, python3.
@@ -32,6 +35,9 @@ GEN_P2P=9175
 HOST_HTTP=8082
 HOST_DEFRA=9183
 HOST_P2P=9173
+HOST2_HTTP=8086
+HOST2_DEFRA=9187
+HOST2_P2P=9177
 
 USDC=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
 KEY0=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -97,8 +103,8 @@ HOST_DATA="$WORKDIR/host-data"; LENS_DIR="$HOST_DATA/lens"; mkdir -p "$LENS_DIR"
 cp "$REPO_ROOT/scripts/smoke/lens/erc20_transfer_usdc.wasm" "$LENS_DIR/"
 sed "s|__LENS_DIR__|$LENS_DIR|g" "$REPO_ROOT/scripts/smoke/lens/views.json.tmpl" > "$LENS_DIR/views.json"
 
-HOST_CFG="$WORKDIR/host.yaml"
-python3 - "$REPO_ROOT/config/config.yaml" "$HOST_CFG" "$HOST_DEFRA" "$HOST_P2P" "$HOST_HTTP" "$GEN_HTTP" <<'PY'
+write_host_config() { # $1=dst $2=defra port $3=p2p port $4=http port $5=bootstrap http port
+python3 - "$REPO_ROOT/config/config.yaml" "$1" "$2" "$3" "$4" "$5" <<'PY'
 import re, sys
 src, dst, defra, p2p, http, gen = sys.argv[1:]
 s = open(src).read()
@@ -112,6 +118,9 @@ s = re.sub(r'^\s*indexer_url: .*$', '    indexer_url: ""', s, flags=re.M)   # no
 s = re.sub(r'^(\s*reconnect_interval_ms:) .*$', r'\1 5000', s, flags=re.M)     # reconnect quickly in the test (default 60s)
 open(dst, 'w').write(s)
 PY
+}
+HOST_CFG="$WORKDIR/host.yaml"
+write_host_config "$HOST_CFG" "$HOST_DEFRA" "$HOST_P2P" "$HOST_HTTP" "$GEN_HTTP"
 
 start_host() {
   ( cd "$WORKDIR" && exec env \
@@ -168,4 +177,26 @@ for _ in $(seq 1 45); do
   sleep 2
 done
 await_host $((P2 + 2)) "phase3-peer-restart" 180
-echo "PASS: URL bootstrap, P2P replication, attestations, wazero lens view, host crash recovery, and peer-restart reconnection all verified"
+# ---- Phase 4: a second host that only knows the FIRST HOST's URL -----------------------------------
+HOST2_DATA="$WORKDIR/host2-data"; mkdir -p "$HOST2_DATA/lens"
+cp "$REPO_ROOT/scripts/smoke/lens/erc20_transfer_usdc.wasm" "$HOST2_DATA/lens/"
+sed "s|__LENS_DIR__|$HOST2_DATA/lens|g" "$REPO_ROOT/scripts/smoke/lens/views.json.tmpl" > "$HOST2_DATA/lens/views.json"
+HOST2_CFG="$WORKDIR/host2.yaml"; HOST2_LOG="$WORKDIR/host2.log"
+write_host_config "$HOST2_CFG" "$HOST2_DEFRA" "$HOST2_P2P" "$HOST2_HTTP" "$HOST_HTTP"   # bootstrap = host 1, not the generator
+( cd "$WORKDIR" && exec env CONFIG_PATH="$HOST2_CFG" SHINZO_DATA_DIR="$HOST2_DATA" SHINZO_KEY_PASSPHRASE=smoke-host2 LOG_LEVEL=info "$HOST_BIN" >>"$HOST2_LOG" 2>&1 ) &
+HOST2_PID=$!
+trap 'kill "${HOST2_PID:-}" 2>/dev/null || true; cleanup' EXIT
+h2_peers() { curl -sf -m 3 -H 'Accept: application/json' "http://127.0.0.1:$HOST2_HTTP/health" 2>/dev/null | python3 -c 'import json,sys; print(len((json.load(sys.stdin).get("p2p") or {}).get("peers") or []))' 2>/dev/null || echo 0; }
+h2_rows()  { curl -sf -m 5 -X POST "http://127.0.0.1:$HOST2_HTTP/api/v0/graphql" -H 'Content-Type: application/json' -d '{"query":"{ Studio_v1_Erc20TransferUSDC(limit: 5) { amount } }"}' 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("data",{}).get("Studio_v1_Erc20TransferUSDC") or []))' 2>/dev/null || echo 0; }
+deadline=$((SECONDS + 180))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  kill -0 "$HOST2_PID" 2>/dev/null || { echo "FAIL(phase4): second host exited early"; tail -30 "$HOST2_LOG"; exit 1; }
+  p=$(h2_peers); a=$(grep -c "Created attestation" "$HOST2_LOG" 2>/dev/null || true); r=$(h2_rows)
+  if [ "${p:-0}" -ge 1 ] && [ "${a:-0}" -ge 2 ] && [ "${r:-0}" -ge 1 ]; then
+    echo "OK(phase4): second host via host-1 URL: peers=$p attestations=$a lens-view rows=$r"; break
+  fi
+  sleep 3
+done
+[ "$SECONDS" -lt "$deadline" ] || { echo "FAIL(phase4): timeout (peers=${p:-0} attestations=${a:-0} view-rows=${r:-0})"; tail -30 "$HOST2_LOG"; exit 1; }
+grep -q "Bootstrap peer (from URL): /ip4/127.0.0.1/tcp/$HOST_P2P/" "$HOST2_LOG" || { echo "FAIL(phase4): second host did not resolve host 1 from its URL"; grep 'Bootstrap' "$HOST2_LOG"; exit 1; }
+echo "PASS: URL bootstrap, P2P replication, attestations, wazero lens view, host crash recovery, peer-restart reconnection, and host-to-host replication all verified"
