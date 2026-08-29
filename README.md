@@ -49,7 +49,8 @@ The binary carries its own defaults for the `testnet` network — no config file
 
 | Variable | Purpose |
 | --- | --- |
-| `SHINZO_KEY_PASSPHRASE` | Encrypts the node's identity keys on disk. Optional: generated on first run into `<data dir>/passphrase` if unset. |
+| `SHINZO_KEY_PASSPHRASE` | Encrypts the node's identity keys on disk. Optional: generated on first run into `<data dir>/passphrase` if unset — convenient for dev, but then the passphrase lives beside the keys; for production supply it (or `_FILE`) and back it up separately. |
+| `TRUSTED_PROXIES` | CIDRs of reverse proxies whose `X-Forwarded-Host/Proto` are honoured. Unset = those headers are ignored. |
 | `SHINZO_NETWORK` | `testnet` (default) or `custom`. Selects the built-in hub + bootstrap peers. |
 | `BOOTSTRAP_PEERS` | Comma-separated extra peers: node URLs, IPs, or multiaddrs. |
 | `ALLOWED_ORIGINS` | Extra browser origins allowed to call this node (CORS), added to the network's own apps (`https://*.shinzo.network`). |

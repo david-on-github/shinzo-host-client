@@ -43,6 +43,7 @@ type PeerIDRegistration struct {
 
 // getRegistrationData returns the signed registration data for the host.
 func (hs *HealthServer) getRegistrationData(r *http.Request) (*DisplayRegistration, error) {
+	r = hs.withoutForwardedHeaders(r)
 	if hs.host == nil {
 		return nil, ErrHostNotAvailable
 	}

@@ -156,6 +156,9 @@ host:
     tls:
       cert_file: ""
       key_file: ""
+    # Reverse proxies (CIDRs or IPs) whose X-Forwarded-Host/Proto we honour when
+    # advertising this node's endpoint. Empty = ignore those headers.
+    trusted_proxies: []
   # Snapshot Bootstrap - download historical data from an indexer on first startup.
   # Set enabled: false to skip snapshot import entirely.
   snapshot:

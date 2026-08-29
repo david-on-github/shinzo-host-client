@@ -92,6 +92,10 @@ The reference compose stays minimal on purpose: `init`, `security_opt`, `stop_gr
 
 Deliberately not done: `read_only: true` root filesystem (Badger and the WASM runtimes' temp-file behaviour need verifying first) and image signing (cosign) — both worthwhile follow-ups.
 
+### 8a. Two regressions from removing nginx, closed
+
+nginx used to *overwrite* `X-Forwarded-Host/Proto`; without it, a client could set them and steer what `/registration` advertises. Forwarded headers are now honoured only from `http.trusted_proxies` (default: none). And the generated-on-first-run passphrase sits beside the keys it encrypts — fine for dev, weaker than an env-supplied secret for production — so `/health` reports `key_passphrase: generated|provided`, the banner says so, and a `--passphrase` flag was removed (secrets on the command line leak via `ps`).
+
 ### 9. The hub is not a startup dependency
 
 A host must come up without ShinzoHub: it can serve, replicate and attest without it, and views arrive once the hub is back. The event-subscription websocket now warns and keeps retrying with backoff instead of failing startup; both it and the LCD client use a 5 s connect timeout so a black-holed hub costs seconds, not the full request timeout (measured: 37 s → 10 s to healthy). Likewise the startup schema fetch is opt-in (`snapshot.indexer_url` empty by default, embedded schema otherwise) with a 10 s timeout — the shipped default used to point at a Shinzo IP and stall every first run for 30 s.

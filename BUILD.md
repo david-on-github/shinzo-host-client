@@ -50,7 +50,7 @@ The binary is self-contained. Once `make build` succeeds:
 
 ```shell
 ./bin/host                       # that's it: joins testnet, state in ~/.shinzo/host, passphrase generated
-./bin/host --data-dir /var/lib/shinzo-host --network testnet
+./bin/host --data-dir /var/lib/shinzo-host --network testnet   # passphrase via SHINZO_KEY_PASSPHRASE(_FILE), never a flag
 ./bin/host health                # exit 0 when the local node is healthy (probes, systemd)
 ./bin/host id                    # peer ID + connection string to hand out
 ./bin/host version

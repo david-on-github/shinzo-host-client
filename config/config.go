@@ -223,6 +223,11 @@ type HTTPConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	// TLS, when both files are set, serves HTTPS directly from the node.
 	TLS TLSConfig `yaml:"tls"`
+	// TrustedProxies are the CIDRs (or IPs) of reverse proxies whose
+	// X-Forwarded-Host/Proto headers are honoured when building the node's
+	// advertised endpoint. Empty (default) = ignore those headers entirely.
+	// Overridable with TRUSTED_PROXIES (comma-separated).
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // TLSConfig points at a PEM certificate/key pair.
@@ -297,6 +302,10 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if err := cfg.applyNetworkPreset(); err != nil {
 		return err
+	}
+
+	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
+		cfg.HostConfig.HTTP.TrustedProxies = strings.Split(v, ",")
 	}
 
 	// ALLOWED_ORIGINS is a comma-separated list of browser origins, added to

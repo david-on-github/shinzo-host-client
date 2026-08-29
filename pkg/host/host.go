@@ -490,6 +490,8 @@ func StartHostingWithEventSubscription(cfg *config.Config) (*Host, error) { //no
 		port, newHost, healthDefraURL, newHost.metrics, lcdURL,
 		server.WithAllowedOrigins(httpCfg.AllowedOrigins),
 		server.WithTLS(httpCfg.TLS.CertFile, httpCfg.TLS.KeyFile),
+		server.WithTrustedProxies(httpCfg.TrustedProxies),
+		server.WithPassphraseSource(passphraseSource(cfg)),
 	)
 
 	// Start health server in background
@@ -1106,4 +1108,13 @@ func openBrowser(url string) error {
 		return fmt.Errorf("platform %s: %w", runtime.GOOS, ErrUnsupportedPlatform)
 	}
 	return cmd.Start()
+}
+
+// passphraseSource reports, for /health, whether the operator supplied the key
+// passphrase or the node generated one into its data directory.
+func passphraseSource(cfg *config.Config) string {
+	if cfg.PassphraseGenerated || cfg.PassphraseFile != "" {
+		return "generated"
+	}
+	return "provided"
 }

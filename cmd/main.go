@@ -37,7 +37,9 @@ Flags for run (each mirrors an environment variable):
   --config      path     config file            (CONFIG_PATH; default: built-in)
   --data-dir    path     all node state         (SHINZO_DATA_DIR; default: ~/.shinzo/host)
   --network     name     testnet | custom       (SHINZO_NETWORK)
-  --passphrase  string   key passphrase         (SHINZO_KEY_PASSPHRASE; default: generated on first run)
+
+Key passphrase: SHINZO_KEY_PASSPHRASE or SHINZO_KEY_PASSPHRASE_FILE (never a flag —
+flags show up in 'ps' and shell history). Generated on first run if neither is set.
 
 Other environment variables: BOOTSTRAP_PEERS, ALLOWED_ORIGINS, LOG_LEVEL, LOG_DIR, SOURCE_CHAIN_ID.
 `
@@ -72,12 +74,11 @@ func runNode(args []string) int {
 	cfgPath := fs.String("config", "", "config file")
 	dataDir := fs.String("data-dir", "", "data directory")
 	network := fs.String("network", "", "network preset")
-	passphrase := fs.String("passphrase", "", "key passphrase")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	// Flags are sugar over the environment so there is exactly one config path.
-	for k, v := range map[string]string{"CONFIG_PATH": *cfgPath, "SHINZO_DATA_DIR": *dataDir, "SHINZO_NETWORK": *network, "SHINZO_KEY_PASSPHRASE": *passphrase} {
+	for k, v := range map[string]string{"CONFIG_PATH": *cfgPath, "SHINZO_DATA_DIR": *dataDir, "SHINZO_NETWORK": *network} {
 		if v != "" {
 			_ = os.Setenv(k, v)
 		}
@@ -156,7 +157,9 @@ func printBanner(cfg *config.Config, h *host.Host) {
 		"  Register     : %s/registration-app\n",
 		version, cfg.Network, cfg.Source, base, peerID, cfg.DefraDB.Store.Path, base)
 	if cfg.PassphraseGenerated {
-		fmt.Printf("  Passphrase   : generated and saved to %s — back it up; it unlocks this node's identity.\n", cfg.PassphraseFile)
+		fmt.Printf("  Passphrase   : generated and saved to %s.\n"+
+			"                 It sits beside the keys it protects, so a copy of the data dir is a copy of this identity.\n"+
+			"                 For production, set SHINZO_KEY_PASSPHRASE_FILE and back the passphrase up separately.\n", cfg.PassphraseFile)
 	}
 	fmt.Println()
 }
